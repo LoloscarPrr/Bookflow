@@ -72,7 +72,7 @@ private fun BookFlowApp() {
             }
 
             importedBook = BookDocument(
-                uri = uri,
+                uriString = uri.toString(),
                 title = title,
                 mimeType = mimeType,
                 textContent = text
@@ -213,9 +213,10 @@ private fun queryDisplayName(context: Context, uri: Uri): String? {
     var cursor: Cursor? = null
     return try {
         cursor = context.contentResolver.query(uri, null, null, null, null)
-        val nameIndex = cursor?.getColumnIndex(OpenableColumns.DISPLAY_NAME) ?: -1
-        if (cursor != null && cursor.moveToFirst() && nameIndex >= 0) {
-            cursor.getString(nameIndex)
+        val currentCursor = cursor ?: return null
+        val nameIndex = currentCursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+        if (currentCursor.moveToFirst() && nameIndex >= 0) {
+            currentCursor.getString(nameIndex)
         } else {
             null
         }
