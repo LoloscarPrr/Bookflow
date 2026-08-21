@@ -28,6 +28,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -37,6 +38,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -47,7 +49,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.bookflow.reader.core.data.DocxTextExtractor
+import app.bookflow.reader.core.data.RuleBasedSceneDirector
 import app.bookflow.reader.core.domain.BookDocument
+import app.bookflow.reader.core.domain.NarrationPlan
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -62,6 +67,7 @@ private fun BookFlowApp() {
     val context = LocalContext.current
     var importedBook by remember { mutableStateOf<BookDocument?>(null) }
     var openedBook by remember { mutableStateOf<BookDocument?>(null) }
+    var showNarrationLab by remember { mutableStateOf(false) }
 
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
@@ -81,26 +87,43 @@ private fun BookFlowApp() {
 
     MaterialTheme {
         Surface(Modifier.fillMaxSize()) {
-            openedBook?.let { book -> ReaderScreen(book, onBack = { openedBook = null }) }
-                ?: Scaffold(topBar = { TopAppBar(title = { Text("BookFlow") }) }) { padding ->
+            when {
+                showNarrationLab -> NarrationLabScreen(
+                    initialText = importedBook?.textContent?.take(1400).orEmpty(),
+                    onBack = { showNarrationLab = false }
+                )
+                openedBook != null -> ReaderScreen(openedBook!!, onBack = { openedBook = null })
+                else -> Scaffold(topBar = { TopAppBar(title = { Text("BookFlow") }) }) { padding ->
                     LibraryScreen(
-                        Modifier.padding(padding), importedBook,
+                        modifier = Modifier.padding(padding),
+                        book = importedBook,
                         onImport = { launcher.launch(arrayOf("application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "text/plain")) },
-                        onOpen = { openedBook = it }
+                        onOpen = { openedBook = it },
+                        onNarrationLab = { showNarrationLab = true }
                     )
                 }
+            }
         }
     }
 }
 
 @Composable
-private fun LibraryScreen(modifier: Modifier, book: BookDocument?, onImport: () -> Unit, onOpen: (BookDocument) -> Unit) {
+private fun LibraryScreen(
+    modifier: Modifier,
+    book: BookDocument?,
+    onImport: () -> Unit,
+    onOpen: (BookDocument) -> Unit,
+    onNarrationLab: () -> Unit,
+) {
     Column(modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Text("Tu biblioteca", style = MaterialTheme.typography.headlineMedium)
         Text("Lectura · Narración · IA", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
         Button(onClick = onImport) { Text("Importar libro") }
+        Button(onClick = onNarrationLab) { Text("Narration Lab") }
         if (book == null) {
-            Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) { Text("Aún no hay libros. Importa tu primer PDF, DOCX o TXT.") }
+            Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                Text("Importa un libro o entra a Narration Lab para probar el nuevo director de narración.")
+            }
         } else {
             Card(Modifier.fillMaxWidth().clickable { onOpen(book) }) {
                 Column(Modifier.padding(18.dp)) {
@@ -121,8 +144,68 @@ private fun LibraryScreen(modifier: Modifier, book: BookDocument?, onImport: () 
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
+private fun NarrationLabScreen(initialText: String, onBack: () -> Unit) {
+    val director = remember { RuleBasedSceneDirector() }
+    val scope = rememberCoroutineScope()
+    var passage by remember(initialText) {
+        mutableStateOf(
+            initialText.ifBlank {
+                "La noche estaba demasiado silenciosa. Caminé despacio, intentando no pensar en lo que había dejado atrás. Por un momento creí escuchar algo entre las sombras."
+            }
+        )
+    }
+    var plan by remember { mutableStateOf<NarrationPlan?>(null) }
+
+    Scaffold(topBar = {
+        TopAppBar(
+            title = { Text("Narration Lab") },
+            navigationIcon = { Button(onClick = onBack, modifier = Modifier.padding(horizontal = 6.dp)) { Text("Volver") } }
+        )
+    }) { padding ->
+        Column(
+            Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Text("Director de escena", style = MaterialTheme.typography.headlineSmall)
+            Text("Esta versión todavía no genera voz neural. Primero valida cómo BookFlow entiende la escena antes de narrarla.")
+            OutlinedTextField(
+                value = passage,
+                onValueChange = { passage = it },
+                label = { Text("Fragmento") },
+                modifier = Modifier.fillMaxWidth(),
+                minLines = 6,
+            )
+            Button(onClick = {
+                scope.launch { plan = director.createPlan(passage) }
+            }) { Text("Analizar narración") }
+
+            plan?.let { result ->
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("NarrationPlan", style = MaterialTheme.typography.titleLarge)
+                        Text("Voz: ${result.speakerLabel}")
+                        Text("Emoción: ${result.mood}")
+                        Text("Intensidad: ${(result.emotionalIntensity * 100).toInt()}%")
+                        Text("Ritmo: ${result.pace}")
+                        Text("Pausa por oración: ${result.pauseAfterSentencesMs} ms")
+                        Text("Ambiente: ${result.ambience}")
+                        Text("Música: ${(result.musicIntensity * 100).toInt()}%")
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
 private fun ReaderScreen(book: BookDocument, onBack: () -> Unit) {
-    Scaffold(topBar = { TopAppBar(title = { Text(book.title, maxLines = 1, overflow = TextOverflow.Ellipsis) }, navigationIcon = { Button(onClick = onBack, modifier = Modifier.padding(horizontal = 6.dp)) { Text("Volver") } }) }) { padding ->
+    Scaffold(topBar = {
+        TopAppBar(
+            title = { Text(book.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+            navigationIcon = { Button(onClick = onBack, modifier = Modifier.padding(horizontal = 6.dp)) { Text("Volver") } }
+        )
+    }) { padding ->
         Box(Modifier.padding(padding).fillMaxSize()) {
             when {
                 book.textContent != null -> TextReader(book.textContent)
@@ -136,7 +219,9 @@ private fun ReaderScreen(book: BookDocument, onBack: () -> Unit) {
 
 @Composable
 private fun TextReader(text: String) {
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp)) { Text(text, style = MaterialTheme.typography.bodyLarge) }
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp)) {
+        Text(text, style = MaterialTheme.typography.bodyLarge)
+    }
 }
 
 @Composable
@@ -145,15 +230,28 @@ private fun PdfBookReader(uriString: String) {
     var renderer by remember(uriString) { mutableStateOf<PdfRenderer?>(null) }
     var descriptor by remember(uriString) { mutableStateOf<ParcelFileDescriptor?>(null) }
     var error by remember(uriString) { mutableStateOf<String?>(null) }
+
     DisposableEffect(uriString) {
         try {
             descriptor = context.contentResolver.openFileDescriptor(Uri.parse(uriString), "r")
             renderer = descriptor?.let { PdfRenderer(it) }
-        } catch (_: Exception) { error = "No pude abrir este PDF. Prueba importándolo nuevamente." }
-        onDispose { runCatching { renderer?.close() }; runCatching { descriptor?.close() } }
+        } catch (_: Exception) {
+            error = "No pude abrir este PDF. Prueba importándolo nuevamente."
+        }
+        onDispose {
+            runCatching { renderer?.close() }
+            runCatching { descriptor?.close() }
+        }
     }
-    if (error != null) { Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(error!!, Modifier.padding(24.dp)) }; return }
-    val pdf = renderer ?: run { Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Abriendo PDF…") }; return }
+
+    if (error != null) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(error!!, Modifier.padding(24.dp)) }
+        return
+    }
+    val pdf = renderer ?: run {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Abriendo PDF…") }
+        return
+    }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         for (index in 0 until pdf.pageCount) {
             remember(uriString, index) { renderPdfPage(pdf, index) }?.let { bitmap ->
@@ -183,5 +281,7 @@ private fun queryDisplayName(context: Context, uri: Uri): String? {
         val c = cursor ?: return null
         val i = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
         if (c.moveToFirst() && i >= 0) c.getString(i) else null
-    } finally { cursor?.close() }
+    } finally {
+        cursor?.close()
+    }
 }
