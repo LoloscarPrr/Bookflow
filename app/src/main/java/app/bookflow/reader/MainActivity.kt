@@ -46,6 +46,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import app.bookflow.reader.core.data.DocxTextExtractor
 import app.bookflow.reader.core.domain.BookDocument
 
 class MainActivity : ComponentActivity() {
@@ -64,36 +65,36 @@ private fun BookFlowApp() {
 
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
-            runCatching {
-                context.contentResolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            }
+            runCatching { context.contentResolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION) }
             val mimeType = context.contentResolver.getType(uri).orEmpty()
             val title = queryDisplayName(context, uri) ?: "Libro"
-            val text = if (mimeType == "text/plain" || title.endsWith(".txt", true)) {
-                runCatching { context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() } }.getOrNull()
-            } else null
+            val isTxt = mimeType == "text/plain" || title.endsWith(".txt", true)
+            val isDocx = mimeType.contains("wordprocessingml", true) || title.endsWith(".docx", true)
+            val text = when {
+                isTxt -> runCatching { context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() } }.getOrNull()
+                isDocx -> runCatching { context.contentResolver.openInputStream(uri)?.use(DocxTextExtractor::extract) }.getOrNull()
+                else -> null
+            }
             importedBook = BookDocument(uri.toString(), title, mimeType, text)
         }
     }
 
     MaterialTheme {
         Surface(Modifier.fillMaxSize()) {
-            openedBook?.let { book ->
-                ReaderScreen(book = book, onBack = { openedBook = null })
-            } ?: Scaffold(topBar = { TopAppBar(title = { Text("BookFlow") }) }) { padding ->
-                LibraryScreen(
-                    modifier = Modifier.padding(padding),
-                    book = importedBook,
-                    onImport = { launcher.launch(arrayOf("application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "text/plain")) },
-                    onOpen = { openedBook = it }
-                )
-            }
+            openedBook?.let { book -> ReaderScreen(book, onBack = { openedBook = null }) }
+                ?: Scaffold(topBar = { TopAppBar(title = { Text("BookFlow") }) }) { padding ->
+                    LibraryScreen(
+                        Modifier.padding(padding), importedBook,
+                        onImport = { launcher.launch(arrayOf("application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "text/plain")) },
+                        onOpen = { openedBook = it }
+                    )
+                }
         }
     }
 }
 
 @Composable
-private fun LibraryScreen(modifier: Modifier = Modifier, book: BookDocument?, onImport: () -> Unit, onOpen: (BookDocument) -> Unit) {
+private fun LibraryScreen(modifier: Modifier, book: BookDocument?, onImport: () -> Unit, onOpen: (BookDocument) -> Unit) {
     Column(modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Text("Tu biblioteca", style = MaterialTheme.typography.headlineMedium)
         Text("Lectura · Narración · IA", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
@@ -106,9 +107,10 @@ private fun LibraryScreen(modifier: Modifier = Modifier, book: BookDocument?, on
                     Text(book.title, style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     Spacer(Modifier.height(6.dp))
                     Text(when {
-                        book.isReadableText -> "TXT · listo para leer"
                         book.isPdf -> "PDF · listo para leer"
-                        book.mimeType.contains("wordprocessingml", true) -> "DOCX · importado"
+                        book.isDocx && book.textContent != null -> "DOCX · listo para leer"
+                        book.isDocx -> "DOCX · no pude extraer el texto"
+                        book.isReadableText -> "TXT · listo para leer"
                         else -> "Documento importado"
                     })
                 }
@@ -120,19 +122,13 @@ private fun LibraryScreen(modifier: Modifier = Modifier, book: BookDocument?, on
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ReaderScreen(book: BookDocument, onBack: () -> Unit) {
-    Scaffold(topBar = {
-        TopAppBar(
-            title = { Text(book.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-            navigationIcon = { Button(onClick = onBack, modifier = Modifier.padding(horizontal = 6.dp)) { Text("Volver") } }
-        )
-    }) { padding ->
+    Scaffold(topBar = { TopAppBar(title = { Text(book.title, maxLines = 1, overflow = TextOverflow.Ellipsis) }, navigationIcon = { Button(onClick = onBack, modifier = Modifier.padding(horizontal = 6.dp)) { Text("Volver") } }) }) { padding ->
         Box(Modifier.padding(padding).fillMaxSize()) {
             when {
                 book.textContent != null -> TextReader(book.textContent)
                 book.isPdf -> PdfBookReader(book.uriString)
-                else -> Column(Modifier.padding(20.dp)) {
-                    Text("Este formato ya está importado. El lector DOCX será el siguiente parser conectado.")
-                }
+                book.isDocx -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("No pude extraer texto de este DOCX.", modifier = Modifier.padding(24.dp)) }
+                else -> Text("Formato no compatible todavía.", modifier = Modifier.padding(20.dp))
             }
         }
     }
@@ -140,9 +136,7 @@ private fun ReaderScreen(book: BookDocument, onBack: () -> Unit) {
 
 @Composable
 private fun TextReader(text: String) {
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp)) {
-        Text(text, style = MaterialTheme.typography.bodyLarge)
-    }
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp)) { Text(text, style = MaterialTheme.typography.bodyLarge) }
 }
 
 @Composable
@@ -151,33 +145,19 @@ private fun PdfBookReader(uriString: String) {
     var renderer by remember(uriString) { mutableStateOf<PdfRenderer?>(null) }
     var descriptor by remember(uriString) { mutableStateOf<ParcelFileDescriptor?>(null) }
     var error by remember(uriString) { mutableStateOf<String?>(null) }
-
     DisposableEffect(uriString) {
         try {
             descriptor = context.contentResolver.openFileDescriptor(Uri.parse(uriString), "r")
             renderer = descriptor?.let { PdfRenderer(it) }
-        } catch (_: Exception) {
-            error = "No pude abrir este PDF. Prueba importándolo nuevamente."
-        }
-        onDispose {
-            runCatching { renderer?.close() }
-            runCatching { descriptor?.close() }
-        }
+        } catch (_: Exception) { error = "No pude abrir este PDF. Prueba importándolo nuevamente." }
+        onDispose { runCatching { renderer?.close() }; runCatching { descriptor?.close() } }
     }
-
-    if (error != null) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(error!!, modifier = Modifier.padding(24.dp)) }
-        return
-    }
-    val pdf = renderer ?: run {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Abriendo PDF…") }
-        return
-    }
+    if (error != null) { Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(error!!, Modifier.padding(24.dp)) }; return }
+    val pdf = renderer ?: run { Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Abriendo PDF…") }; return }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         for (index in 0 until pdf.pageCount) {
-            val bitmap = remember(uriString, index) { renderPdfPage(pdf, index) }
-            bitmap?.let {
-                Image(bitmap = it.asImageBitmap(), contentDescription = "Página ${index + 1}", modifier = Modifier.fillMaxWidth(), contentScale = ContentScale.FillWidth)
+            remember(uriString, index) { renderPdfPage(pdf, index) }?.let { bitmap ->
+                Image(bitmap.asImageBitmap(), "Página ${index + 1}", Modifier.fillMaxWidth(), contentScale = ContentScale.FillWidth)
             }
         }
     }
@@ -186,22 +166,22 @@ private fun PdfBookReader(uriString: String) {
 private fun renderPdfPage(renderer: PdfRenderer, index: Int): Bitmap? = runCatching {
     renderer.openPage(index).use { page ->
         val scale = 1.5f
-        val bitmap = Bitmap.createBitmap((page.width * scale).toInt(), (page.height * scale).toInt(), Bitmap.Config.ARGB_8888)
-        bitmap.eraseColor(android.graphics.Color.WHITE)
-        page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-        bitmap
+        Bitmap.createBitmap((page.width * scale).toInt(), (page.height * scale).toInt(), Bitmap.Config.ARGB_8888).also { bitmap ->
+            bitmap.eraseColor(android.graphics.Color.WHITE)
+            page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+        }
     }
 }.getOrNull()
 
-private val BookDocument.isPdf: Boolean
-    get() = mimeType.contains("pdf", true) || title.endsWith(".pdf", true)
+private val BookDocument.isPdf get() = mimeType.contains("pdf", true) || title.endsWith(".pdf", true)
+private val BookDocument.isDocx get() = mimeType.contains("wordprocessingml", true) || title.endsWith(".docx", true)
 
 private fun queryDisplayName(context: Context, uri: Uri): String? {
     var cursor: Cursor? = null
     return try {
         cursor = context.contentResolver.query(uri, null, null, null, null)
-        val currentCursor = cursor ?: return null
-        val nameIndex = currentCursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-        if (currentCursor.moveToFirst() && nameIndex >= 0) currentCursor.getString(nameIndex) else null
+        val c = cursor ?: return null
+        val i = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+        if (c.moveToFirst() && i >= 0) c.getString(i) else null
     } finally { cursor?.close() }
 }
