@@ -4,6 +4,7 @@ import android.content.Context
 import android.database.Cursor
 import android.graphics.Bitmap
 import android.graphics.pdf.PdfRenderer
+import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Bundle
 import android.os.ParcelFileDescriptor
@@ -50,6 +51,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.bookflow.reader.core.data.DocxTextExtractor
 import app.bookflow.reader.core.data.RuleBasedSceneDirector
+import app.bookflow.reader.core.data.SupabaseVoiceRenderer
 import app.bookflow.reader.core.domain.BookDocument
 import app.bookflow.reader.core.domain.NarrationPlan
 import kotlinx.coroutines.launch
@@ -89,7 +91,7 @@ private fun BookFlowApp() {
         Surface(Modifier.fillMaxSize()) {
             when {
                 showNarrationLab -> NarrationLabScreen(
-                    initialText = importedBook?.textContent?.take(1400).orEmpty(),
+                    initialText = importedBook?.textContent?.take(1200).orEmpty(),
                     onBack = { showNarrationLab = false }
                 )
                 openedBook != null -> ReaderScreen(openedBook!!, onBack = { openedBook = null })
@@ -145,7 +147,9 @@ private fun LibraryScreen(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun NarrationLabScreen(initialText: String, onBack: () -> Unit) {
+    val context = LocalContext.current
     val director = remember { RuleBasedSceneDirector() }
+    val voiceRenderer = remember(context) { SupabaseVoiceRenderer(context.applicationContext) }
     val scope = rememberCoroutineScope()
     var passage by remember(initialText) {
         mutableStateOf(
@@ -155,6 +159,17 @@ private fun NarrationLabScreen(initialText: String, onBack: () -> Unit) {
         )
     }
     var plan by remember { mutableStateOf<NarrationPlan?>(null) }
+    var generating by remember { mutableStateOf(false) }
+    var narrationStatus by remember { mutableStateOf("La voz neural todavía no se ha generado.") }
+    var player by remember { mutableStateOf<MediaPlayer?>(null) }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            runCatching { player?.stop() }
+            runCatching { player?.release() }
+            player = null
+        }
+    }
 
     Scaffold(topBar = {
         TopAppBar(
@@ -167,16 +182,19 @@ private fun NarrationLabScreen(initialText: String, onBack: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             Text("Director de escena", style = MaterialTheme.typography.headlineSmall)
-            Text("Esta versión todavía no genera voz neural. Primero valida cómo BookFlow entiende la escena antes de narrarla.")
+            Text("Analiza el fragmento y luego genera una prueba neural con ElevenLabs. Para proteger tus créditos, Narration Lab usa como máximo 1.200 caracteres por generación.")
             OutlinedTextField(
                 value = passage,
-                onValueChange = { passage = it },
-                label = { Text("Fragmento") },
+                onValueChange = { passage = it.take(1200) },
+                label = { Text("Fragmento (${passage.length}/1200)") },
                 modifier = Modifier.fillMaxWidth(),
                 minLines = 6,
             )
             Button(onClick = {
-                scope.launch { plan = director.createPlan(passage) }
+                scope.launch {
+                    plan = director.createPlan(passage)
+                    narrationStatus = "Plan listo. Puedes generar la voz neural."
+                }
             }) { Text("Analizar narración") }
 
             plan?.let { result ->
@@ -190,6 +208,42 @@ private fun NarrationLabScreen(initialText: String, onBack: () -> Unit) {
                         Text("Pausa por oración: ${result.pauseAfterSentencesMs} ms")
                         Text("Ambiente: ${result.ambience}")
                         Text("Música: ${(result.musicIntensity * 100).toInt()}%")
+                        Spacer(Modifier.height(4.dp))
+                        Button(
+                            enabled = !generating && result.passage.isNotBlank(),
+                            onClick = {
+                                generating = true
+                                narrationStatus = "Generando voz neural…"
+                                scope.launch {
+                                    try {
+                                        val segment = voiceRenderer.render(result, ADAM_VOICE_ID)
+                                        runCatching { player?.release() }
+                                        player = MediaPlayer().apply {
+                                            setDataSource(segment.localUri)
+                                            setOnPreparedListener {
+                                                narrationStatus = "Reproduciendo voz neural (Adam · ElevenLabs v3)."
+                                                it.start()
+                                            }
+                                            setOnCompletionListener {
+                                                narrationStatus = "Reproducción terminada."
+                                            }
+                                            setOnErrorListener { _, what, extra ->
+                                                narrationStatus = "Error de reproducción ($what/$extra)."
+                                                true
+                                            }
+                                            prepareAsync()
+                                        }
+                                    } catch (error: Exception) {
+                                        narrationStatus = "No pude generar la voz: ${error.message ?: "error desconocido"}"
+                                    } finally {
+                                        generating = false
+                                    }
+                                }
+                            }
+                        ) {
+                            Text(if (generating) "Generando…" else "Generar voz neural")
+                        }
+                        Text(narrationStatus, style = MaterialTheme.typography.bodyMedium)
                     }
                 }
             }
@@ -285,3 +339,5 @@ private fun queryDisplayName(context: Context, uri: Uri): String? {
         cursor?.close()
     }
 }
+
+private const val ADAM_VOICE_ID = "pNInz6obpgDQGcFmaJgB"
