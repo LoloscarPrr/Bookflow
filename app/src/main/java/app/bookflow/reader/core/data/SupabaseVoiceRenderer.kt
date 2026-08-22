@@ -19,7 +19,7 @@ class SupabaseVoiceRenderer(
         val connection = (URL(FUNCTION_URL).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
             connectTimeout = 20_000
-            readTimeout = 60_000
+            readTimeout = 90_000
             doOutput = true
             setRequestProperty("Content-Type", "application/json")
             setRequestProperty("apikey", SUPABASE_ANON_KEY)
@@ -31,6 +31,10 @@ class SupabaseVoiceRenderer(
                 put("text", plan.passage.take(MAX_CHARS))
                 if (voiceId.isNotBlank()) put("voiceId", voiceId)
                 put("modelId", "eleven_v3")
+                put("mood", plan.mood.name)
+                put("pace", plan.pace.name)
+                put("emotionalIntensity", plan.emotionalIntensity.toDouble())
+                put("pauseAfterSentencesMs", plan.pauseAfterSentencesMs)
             }
             connection.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
 
@@ -47,7 +51,7 @@ class SupabaseVoiceRenderer(
             }
 
             RenderedVoiceSegment(
-                cacheKey = "${plan.speakerId}:${plan.passage.hashCode()}:${voiceId.ifBlank { DEFAULT_VOICE_ID }}",
+                cacheKey = "${plan.speakerId}:${plan.mood}:${plan.pace}:${plan.passage.hashCode()}:${voiceId.ifBlank { DEFAULT_VOICE_ID }}",
                 localUri = file.absolutePath,
                 durationMs = 0L,
             )
