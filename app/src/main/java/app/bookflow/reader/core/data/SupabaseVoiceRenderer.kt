@@ -1,0 +1,65 @@
+package app.bookflow.reader.core.data
+
+import android.content.Context
+import app.bookflow.reader.core.domain.NarrationPlan
+import app.bookflow.reader.core.domain.RenderedVoiceSegment
+import app.bookflow.reader.core.domain.VoiceRenderer
+import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
+import org.json.JSONObject
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+
+class SupabaseVoiceRenderer(
+    private val context: Context,
+) : VoiceRenderer {
+
+    override suspend fun render(plan: NarrationPlan, voiceId: String): RenderedVoiceSegment = withContext(Dispatchers.IO) {
+        val connection = (URL(FUNCTION_URL).openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            connectTimeout = 20_000
+            readTimeout = 60_000
+            doOutput = true
+            setRequestProperty("Content-Type", "application/json")
+            setRequestProperty("apikey", SUPABASE_ANON_KEY)
+            setRequestProperty("Authorization", "Bearer $SUPABASE_ANON_KEY")
+        }
+
+        try {
+            val payload = JSONObject().apply {
+                put("text", plan.passage.take(MAX_CHARS))
+                if (voiceId.isNotBlank()) put("voiceId", voiceId)
+                put("modelId", "eleven_v3")
+            }
+            connection.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
+
+            val status = connection.responseCode
+            if (status !in 200..299) {
+                val details = connection.errorStream?.bufferedReader()?.use { it.readText() }
+                    ?: "HTTP $status"
+                error("Narration backend error: $details")
+            }
+
+            val file = File(context.cacheDir, "bookflow_narration_${System.currentTimeMillis()}.mp3")
+            connection.inputStream.use { input ->
+                file.outputStream().use { output -> input.copyTo(output) }
+            }
+
+            RenderedVoiceSegment(
+                cacheKey = "${plan.speakerId}:${plan.passage.hashCode()}:${voiceId.ifBlank { DEFAULT_VOICE_ID }}",
+                localUri = file.absolutePath,
+                durationMs = 0L,
+            )
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private companion object {
+        const val FUNCTION_URL = "https://fkgccemweaqkdrjozgml.supabase.co/functions/v1/bookflow-narration"
+        const val SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZrZ2NjZW13ZWFxa2Ryam96Z21sIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY5MDE1NjIsImV4cCI6MjEwMjQ3NzU2Mn0.2jZaYypzjugDFupl7vKPrfNpb8CVzH_DHOxf1mWNWwI"
+        const val DEFAULT_VOICE_ID = "pNInz6obpgDQGcFmaJgB"
+        const val MAX_CHARS = 1200
+    }
+}
