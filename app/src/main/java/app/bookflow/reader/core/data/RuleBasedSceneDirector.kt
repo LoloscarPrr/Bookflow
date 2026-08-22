@@ -19,11 +19,11 @@ class RuleBasedSceneDirector : SceneDirector {
             else -> NarrationMood.CALM
         }
         val intensity = when (mood) {
-            NarrationMood.ACTION -> 0.9f
-            NarrationMood.TENSE -> 0.75f
-            NarrationMood.MYSTERIOUS -> 0.55f
-            NarrationMood.MELANCHOLIC -> 0.45f
-            NarrationMood.HOPEFUL -> 0.4f
+            NarrationMood.ACTION -> 0.78f
+            NarrationMood.TENSE -> 0.65f
+            NarrationMood.MYSTERIOUS -> 0.48f
+            NarrationMood.MELANCHOLIC -> 0.42f
+            NarrationMood.HOPEFUL -> 0.38f
             NarrationMood.CALM -> 0.25f
             NarrationMood.NEUTRAL -> 0.2f
         }
@@ -39,14 +39,35 @@ class RuleBasedSceneDirector : SceneDirector {
             NarrationMood.MYSTERIOUS -> AmbienceClass.NIGHT
             else -> AmbienceClass.ROOM
         }
+
+        // Voice identity is independent from emotion. These markers are deliberately
+        // conservative: when the prose explicitly identifies a first-person female
+        // narrator we cast a female voice; otherwise we keep the neutral/default cast.
+        val femaleMarkers = listOf(
+            "estaba enamorada", "me sentía sola", "me sentía segura", "me sentía nerviosa",
+            "estaba cansada", "estaba asustada", "estaba emocionada", "estaba confundida",
+            "soy una mujer", "era una chica", "era una niña", "como mujer", "mi novio",
+            "mi esposo", "mi marido"
+        )
+        val maleMarkers = listOf(
+            "estaba enamorado", "me sentía solo", "me sentía seguro", "me sentía nervioso",
+            "estaba cansado", "estaba asustado", "estaba emocionado", "estaba confundido",
+            "soy un hombre", "era un chico", "era un niño", "como hombre", "mi novia",
+            "mi esposa"
+        )
+        val femaleScore = femaleMarkers.count(text::contains)
+        val maleScore = maleMarkers.count(text::contains)
+        val speakerId = if (femaleScore > maleScore && femaleScore > 0) "narrator_female" else "narrator_male"
+        val speakerLabel = if (speakerId == "narrator_female") "Narradora" else "Narrador"
+
         return NarrationPlan(
             passage = passage,
-            speakerId = "narrator",
-            speakerLabel = "Narrador",
+            speakerId = speakerId,
+            speakerLabel = speakerLabel,
             mood = mood,
             emotionalIntensity = intensity,
             pace = pace,
-            pauseAfterSentencesMs = if (pace == NarrationPace.SLOW) 650 else 350,
+            pauseAfterSentencesMs = if (pace == NarrationPace.SLOW) 600 else 350,
             ambience = ambience,
             musicIntensity = (intensity * 0.7f).coerceIn(0f, 1f),
             spoilerBoundary = context.spoilerBoundary,
