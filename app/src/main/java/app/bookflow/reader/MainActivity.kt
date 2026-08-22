@@ -18,6 +18,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -29,7 +30,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -53,7 +53,6 @@ import app.bookflow.reader.core.data.DocxTextExtractor
 import app.bookflow.reader.core.data.RuleBasedSceneDirector
 import app.bookflow.reader.core.data.SupabaseVoiceRenderer
 import app.bookflow.reader.core.domain.BookDocument
-import app.bookflow.reader.core.domain.NarrationPlan
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -69,8 +68,6 @@ private fun BookFlowApp() {
     val context = LocalContext.current
     var importedBook by remember { mutableStateOf<BookDocument?>(null) }
     var openedBook by remember { mutableStateOf<BookDocument?>(null) }
-    var showNarrationLab by remember { mutableStateOf(false) }
-
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
             runCatching { context.contentResolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION) }
@@ -86,166 +83,28 @@ private fun BookFlowApp() {
             importedBook = BookDocument(uri.toString(), title, mimeType, text)
         }
     }
-
     MaterialTheme {
         Surface(Modifier.fillMaxSize()) {
-            when {
-                showNarrationLab -> NarrationLabScreen(
-                    initialText = importedBook?.textContent?.take(1200).orEmpty(),
-                    onBack = { showNarrationLab = false }
-                )
-                openedBook != null -> ReaderScreen(openedBook!!, onBack = { openedBook = null })
-                else -> Scaffold(topBar = { TopAppBar(title = { Text("BookFlow") }) }) { padding ->
-                    LibraryScreen(
-                        modifier = Modifier.padding(padding),
-                        book = importedBook,
-                        onImport = { launcher.launch(arrayOf("application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "text/plain")) },
-                        onOpen = { openedBook = it },
-                        onNarrationLab = { showNarrationLab = true }
-                    )
-                }
+            if (openedBook != null) ReaderScreen(openedBook!!, onBack = { openedBook = null })
+            else Scaffold(topBar = { TopAppBar(title = { Text("BookFlow") }) }) { padding ->
+                LibraryScreen(Modifier.padding(padding), importedBook, { launcher.launch(arrayOf("application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "text/plain")) }, { openedBook = it })
             }
         }
     }
 }
 
 @Composable
-private fun LibraryScreen(
-    modifier: Modifier,
-    book: BookDocument?,
-    onImport: () -> Unit,
-    onOpen: (BookDocument) -> Unit,
-    onNarrationLab: () -> Unit,
-) {
+private fun LibraryScreen(modifier: Modifier, book: BookDocument?, onImport: () -> Unit, onOpen: (BookDocument) -> Unit) {
     Column(modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Text("Tu biblioteca", style = MaterialTheme.typography.headlineMedium)
         Text("Lectura · Narración · IA", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
         Button(onClick = onImport) { Text("Importar libro") }
-        Button(onClick = onNarrationLab) { Text("Narration Lab") }
-        if (book == null) {
-            Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-                Text("Importa un libro o entra a Narration Lab para probar el nuevo director de narración.")
-            }
-        } else {
-            Card(Modifier.fillMaxWidth().clickable { onOpen(book) }) {
-                Column(Modifier.padding(18.dp)) {
-                    Text(book.title, style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    Spacer(Modifier.height(6.dp))
-                    Text(when {
-                        book.isPdf -> "PDF · listo para leer"
-                        book.isDocx && book.textContent != null -> "DOCX · listo para leer"
-                        book.isDocx -> "DOCX · no pude extraer el texto"
-                        book.isReadableText -> "TXT · listo para leer"
-                        else -> "Documento importado"
-                    })
-                }
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun NarrationLabScreen(initialText: String, onBack: () -> Unit) {
-    val context = LocalContext.current
-    val director = remember { RuleBasedSceneDirector() }
-    val voiceRenderer = remember(context) { SupabaseVoiceRenderer(context.applicationContext) }
-    val scope = rememberCoroutineScope()
-    var passage by remember(initialText) {
-        mutableStateOf(
-            initialText.ifBlank {
-                "La noche estaba demasiado silenciosa. Caminé despacio, intentando no pensar en lo que había dejado atrás. Por un momento creí escuchar algo entre las sombras."
-            }
-        )
-    }
-    var plan by remember { mutableStateOf<NarrationPlan?>(null) }
-    var generating by remember { mutableStateOf(false) }
-    var narrationStatus by remember { mutableStateOf("La voz neural todavía no se ha generado.") }
-    var player by remember { mutableStateOf<MediaPlayer?>(null) }
-
-    DisposableEffect(Unit) {
-        onDispose {
-            runCatching { player?.stop() }
-            runCatching { player?.release() }
-            player = null
-        }
-    }
-
-    Scaffold(topBar = {
-        TopAppBar(
-            title = { Text("Narration Lab") },
-            navigationIcon = { Button(onClick = onBack, modifier = Modifier.padding(horizontal = 6.dp)) { Text("Volver") } }
-        )
-    }) { padding ->
-        Column(
-            Modifier.padding(padding).fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            Text("Director de escena", style = MaterialTheme.typography.headlineSmall)
-            Text("Analiza el fragmento y luego genera una prueba neural con ElevenLabs. Para proteger tus créditos, Narration Lab usa como máximo 1.200 caracteres por generación.")
-            OutlinedTextField(
-                value = passage,
-                onValueChange = { passage = it.take(1200) },
-                label = { Text("Fragmento (${passage.length}/1200)") },
-                modifier = Modifier.fillMaxWidth(),
-                minLines = 6,
-            )
-            Button(onClick = {
-                scope.launch {
-                    plan = director.createPlan(passage)
-                    narrationStatus = "Plan listo. Puedes generar la voz neural."
-                }
-            }) { Text("Analizar narración") }
-
-            plan?.let { result ->
-                Card(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("NarrationPlan", style = MaterialTheme.typography.titleLarge)
-                        Text("Voz: ${result.speakerLabel}")
-                        Text("Emoción: ${result.mood}")
-                        Text("Intensidad: ${(result.emotionalIntensity * 100).toInt()}%")
-                        Text("Ritmo: ${result.pace}")
-                        Text("Pausa por oración: ${result.pauseAfterSentencesMs} ms")
-                        Text("Ambiente: ${result.ambience}")
-                        Text("Música: ${(result.musicIntensity * 100).toInt()}%")
-                        Spacer(Modifier.height(4.dp))
-                        Button(
-                            enabled = !generating && result.passage.isNotBlank(),
-                            onClick = {
-                                generating = true
-                                narrationStatus = "Generando voz neural…"
-                                scope.launch {
-                                    try {
-                                        val segment = voiceRenderer.render(result, ADAM_VOICE_ID)
-                                        runCatching { player?.release() }
-                                        player = MediaPlayer().apply {
-                                            setDataSource(segment.localUri)
-                                            setOnPreparedListener {
-                                                narrationStatus = "Reproduciendo voz neural (Adam · ElevenLabs v3)."
-                                                it.start()
-                                            }
-                                            setOnCompletionListener {
-                                                narrationStatus = "Reproducción terminada."
-                                            }
-                                            setOnErrorListener { _, what, extra ->
-                                                narrationStatus = "Error de reproducción ($what/$extra)."
-                                                true
-                                            }
-                                            prepareAsync()
-                                        }
-                                    } catch (error: Exception) {
-                                        narrationStatus = "No pude generar la voz: ${error.message ?: "error desconocido"}"
-                                    } finally {
-                                        generating = false
-                                    }
-                                }
-                            }
-                        ) {
-                            Text(if (generating) "Generando…" else "Generar voz neural")
-                        }
-                        Text(narrationStatus, style = MaterialTheme.typography.bodyMedium)
-                    }
-                }
+        if (book == null) Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) { Text("Importa un libro para leerlo o escucharlo con narración IA.") }
+        else Card(Modifier.fillMaxWidth().clickable { onOpen(book) }) {
+            Column(Modifier.padding(18.dp)) {
+                Text(book.title, style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Spacer(Modifier.height(6.dp))
+                Text(when { book.isPdf -> "PDF · listo para leer"; book.isDocx && book.textContent != null -> "DOCX · listo para narrar"; book.isReadableText -> "TXT · listo para narrar"; else -> "Documento importado" })
             }
         }
     }
@@ -254,27 +113,52 @@ private fun NarrationLabScreen(initialText: String, onBack: () -> Unit) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ReaderScreen(book: BookDocument, onBack: () -> Unit) {
-    Scaffold(topBar = {
-        TopAppBar(
-            title = { Text(book.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-            navigationIcon = { Button(onClick = onBack, modifier = Modifier.padding(horizontal = 6.dp)) { Text("Volver") } }
-        )
-    }) { padding ->
-        Box(Modifier.padding(padding).fillMaxSize()) {
-            when {
-                book.textContent != null -> TextReader(book.textContent)
-                book.isPdf -> PdfBookReader(book.uriString)
-                book.isDocx -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("No pude extraer texto de este DOCX.", modifier = Modifier.padding(24.dp)) }
-                else -> Text("Formato no compatible todavía.", modifier = Modifier.padding(20.dp))
-            }
+    val context = LocalContext.current
+    val director = remember { RuleBasedSceneDirector() }
+    val renderer = remember(context) { SupabaseVoiceRenderer(context.applicationContext) }
+    val scope = rememberCoroutineScope()
+    var player by remember { mutableStateOf<MediaPlayer?>(null) }
+    var generating by remember { mutableStateOf(false) }
+    var status by remember { mutableStateOf("Listo para leer.") }
+    DisposableEffect(Unit) { onDispose { runCatching { player?.release() } } }
+    Scaffold(topBar = { TopAppBar(title = { Text(book.title, maxLines = 1, overflow = TextOverflow.Ellipsis) }, navigationIcon = { Button(onClick = onBack, modifier = Modifier.padding(horizontal = 6.dp)) { Text("Volver") } }) }) { padding ->
+        Column(Modifier.padding(padding).fillMaxSize()) {
+            if (book.textContent != null) {
+                Card(Modifier.fillMaxWidth().padding(12.dp)) {
+                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Narración IA", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        Text("BookFlow analizará automáticamente el texto del libro y dirigirá la voz.")
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(enabled = !generating, onClick = {
+                                generating = true; status = "Analizando y generando narración…"
+                                scope.launch {
+                                    try {
+                                        val passage = book.textContent.take(1200)
+                                        val plan = director.createPlan(passage)
+                                        val voiceId = if (plan.speakerId == "narrator_female") FEMALE_VOICE_ID else MALE_VOICE_ID
+                                        val segment = renderer.render(plan, voiceId)
+                                        runCatching { player?.release() }
+                                        player = MediaPlayer().apply {
+                                            setDataSource(segment.localUri)
+                                            setOnPreparedListener { status = "Reproduciendo · ${plan.speakerLabel} · ${plan.mood}"; it.start() }
+                                            setOnCompletionListener { status = "Narración terminada." }
+                                            prepareAsync()
+                                        }
+                                    } catch (e: Exception) { status = "No pude narrar: ${e.message ?: "error desconocido"}" }
+                                    finally { generating = false }
+                                }
+                            }) { Text(if (generating) "Generando…" else "Narrar desde aquí") }
+                            if (player?.isPlaying == true) Button(onClick = { player?.pause(); status = "Pausado." }) { Text("Pausar") }
+                        }
+                        Text(status, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(20.dp)) { Text(book.textContent, style = MaterialTheme.typography.bodyLarge) }
+            } else if (book.isPdf) {
+                Card(Modifier.fillMaxWidth().padding(12.dp)) { Text("Narración de PDF: siguiente paso. Primero debemos extraer el texto del PDF; por ahora puedes leerlo visualmente.", Modifier.padding(14.dp)) }
+                Box(Modifier.weight(1f)) { PdfBookReader(book.uriString) }
+            } else Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Este formato todavía no puede narrarse.") }
         }
-    }
-}
-
-@Composable
-private fun TextReader(text: String) {
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp)) {
-        Text(text, style = MaterialTheme.typography.bodyLarge)
     }
 }
 
@@ -283,61 +167,22 @@ private fun PdfBookReader(uriString: String) {
     val context = LocalContext.current
     var renderer by remember(uriString) { mutableStateOf<PdfRenderer?>(null) }
     var descriptor by remember(uriString) { mutableStateOf<ParcelFileDescriptor?>(null) }
-    var error by remember(uriString) { mutableStateOf<String?>(null) }
-
     DisposableEffect(uriString) {
-        try {
-            descriptor = context.contentResolver.openFileDescriptor(Uri.parse(uriString), "r")
-            renderer = descriptor?.let { PdfRenderer(it) }
-        } catch (_: Exception) {
-            error = "No pude abrir este PDF. Prueba importándolo nuevamente."
-        }
-        onDispose {
-            runCatching { renderer?.close() }
-            runCatching { descriptor?.close() }
-        }
+        descriptor = runCatching { context.contentResolver.openFileDescriptor(Uri.parse(uriString), "r") }.getOrNull()
+        renderer = descriptor?.let { runCatching { PdfRenderer(it) }.getOrNull() }
+        onDispose { runCatching { renderer?.close() }; runCatching { descriptor?.close() } }
     }
-
-    if (error != null) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(error!!, Modifier.padding(24.dp)) }
-        return
-    }
-    val pdf = renderer ?: run {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Abriendo PDF…") }
-        return
-    }
+    val pdf = renderer ?: return Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Abriendo PDF…") }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        for (index in 0 until pdf.pageCount) {
-            remember(uriString, index) { renderPdfPage(pdf, index) }?.let { bitmap ->
-                Image(bitmap.asImageBitmap(), "Página ${index + 1}", Modifier.fillMaxWidth(), contentScale = ContentScale.FillWidth)
-            }
-        }
+        for (index in 0 until pdf.pageCount) remember(uriString, index) { renderPdfPage(pdf, index) }?.let { Image(it.asImageBitmap(), "Página ${index + 1}", Modifier.fillMaxWidth(), contentScale = ContentScale.FillWidth) }
     }
 }
 
 private fun renderPdfPage(renderer: PdfRenderer, index: Int): Bitmap? = runCatching {
-    renderer.openPage(index).use { page ->
-        val scale = 1.5f
-        Bitmap.createBitmap((page.width * scale).toInt(), (page.height * scale).toInt(), Bitmap.Config.ARGB_8888).also { bitmap ->
-            bitmap.eraseColor(android.graphics.Color.WHITE)
-            page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-        }
-    }
+    renderer.openPage(index).use { page -> Bitmap.createBitmap((page.width * 1.5f).toInt(), (page.height * 1.5f).toInt(), Bitmap.Config.ARGB_8888).also { bitmap -> bitmap.eraseColor(android.graphics.Color.WHITE); page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY) } }
 }.getOrNull()
-
 private val BookDocument.isPdf get() = mimeType.contains("pdf", true) || title.endsWith(".pdf", true)
 private val BookDocument.isDocx get() = mimeType.contains("wordprocessingml", true) || title.endsWith(".docx", true)
-
-private fun queryDisplayName(context: Context, uri: Uri): String? {
-    var cursor: Cursor? = null
-    return try {
-        cursor = context.contentResolver.query(uri, null, null, null, null)
-        val c = cursor ?: return null
-        val i = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-        if (c.moveToFirst() && i >= 0) c.getString(i) else null
-    } finally {
-        cursor?.close()
-    }
-}
-
-private const val ADAM_VOICE_ID = "pNInz6obpgDQGcFmaJgB"
+private fun queryDisplayName(context: Context, uri: Uri): String? { var cursor: Cursor? = null; return try { cursor = context.contentResolver.query(uri, null, null, null, null); val c = cursor ?: return null; val i = c.getColumnIndex(OpenableColumns.DISPLAY_NAME); if (c.moveToFirst() && i >= 0) c.getString(i) else null } finally { cursor?.close() } }
+private const val MALE_VOICE_ID = "pNInz6obpgDQGcFmaJgB"
+private const val FEMALE_VOICE_ID = "EXAVITQu4vr4xnSDxMaL"
