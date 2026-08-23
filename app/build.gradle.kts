@@ -12,8 +12,8 @@ android {
         applicationId = "app.bookflow.reader"
         minSdk = 26
         targetSdk = 35
-        versionCode = 11
-        versionName = "0.2.0-alpha08"
+        versionCode = 12
+        versionName = "0.2.0-alpha09"
     }
 
     compileOptions {
