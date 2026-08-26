@@ -7,6 +7,7 @@ import app.bookflow.reader.core.domain.VoiceRenderer
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
+import java.security.MessageDigest
 import org.json.JSONObject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -18,6 +19,14 @@ class SupabaseVoiceRenderer(private val context: Context) : VoiceRenderer {
             "narrator_male" -> MALE_VOICE_ID
             else -> voiceId.ifBlank { MALE_VOICE_ID }
         }
+        val passage = plan.passage.take(MAX_CHARS)
+        val cacheKey = sha256("$castVoiceId|${plan.mood}|${plan.pace}|${plan.emotionalIntensity}|${plan.pauseAfterSentencesMs}|$passage")
+        val cacheDir = File(context.filesDir, "narration_cache").apply { mkdirs() }
+        val cached = File(cacheDir, "$cacheKey.mp3")
+        if (cached.exists() && cached.length() > 0L) {
+            return@withContext RenderedVoiceSegment(cacheKey, cached.absolutePath, 0L)
+        }
+
         val connection = (URL(FUNCTION_URL).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"; connectTimeout = 20_000; readTimeout = 90_000; doOutput = true
             setRequestProperty("Content-Type", "application/json")
@@ -26,7 +35,7 @@ class SupabaseVoiceRenderer(private val context: Context) : VoiceRenderer {
         }
         try {
             val payload = JSONObject().apply {
-                put("text", plan.passage.take(MAX_CHARS)); put("voiceId", castVoiceId)
+                put("text", passage); put("voiceId", castVoiceId)
                 put("modelId", "eleven_v3"); put("mood", plan.mood.name); put("pace", plan.pace.name)
                 put("emotionalIntensity", plan.emotionalIntensity.toDouble()); put("pauseAfterSentencesMs", plan.pauseAfterSentencesMs)
             }
@@ -34,13 +43,18 @@ class SupabaseVoiceRenderer(private val context: Context) : VoiceRenderer {
             val status = connection.responseCode
             if (status !in 200..299) {
                 val details = connection.errorStream?.bufferedReader()?.use { it.readText() } ?: "HTTP $status"
-                error("Narration backend error: $details")
+                if (details.contains("quota_exceeded", ignoreCase = true)) {
+                    throw NarrationQuotaExceededException()
+                }
+                error("No se pudo generar la narración neural (HTTP $status).")
             }
-            val file = File(context.cacheDir, "bookflow_narration_${System.currentTimeMillis()}.mp3")
-            connection.inputStream.use { input -> file.outputStream().use { output -> input.copyTo(output) } }
-            RenderedVoiceSegment("${plan.speakerId}:${plan.mood}:${plan.pace}:${plan.passage.hashCode()}:$castVoiceId", file.absolutePath, 0L)
+            connection.inputStream.use { input -> cached.outputStream().use { output -> input.copyTo(output) } }
+            RenderedVoiceSegment(cacheKey, cached.absolutePath, 0L)
         } finally { connection.disconnect() }
     }
+
+    private fun sha256(value: String): String = MessageDigest.getInstance("SHA-256")
+        .digest(value.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
 
     private companion object {
         const val FUNCTION_URL = "https://fkgccemweaqkdrjozgml.supabase.co/functions/v1/bookflow-narration"
@@ -50,3 +64,5 @@ class SupabaseVoiceRenderer(private val context: Context) : VoiceRenderer {
         const val MAX_CHARS = 1200
     }
 }
+
+class NarrationQuotaExceededException : Exception("Se agotaron los créditos de narración neural. Los tramos ya generados siguen disponibles sin gastar créditos.")
