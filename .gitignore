@@ -1,0 +1,11 @@
+.gradle/
+build/
+app/build/
+local.properties
+
+# Reproducible offline TTS binaries and model assets are downloaded by
+# scripts/fetch-offline-tts.sh instead of being committed to git.
+.offline-tts-downloads/
+app/libs/*.aar
+app/src/main/assets/vits-piper-es_ES-sharvard-medium/
+

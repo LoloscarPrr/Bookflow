@@ -12,8 +12,12 @@ android {
         applicationId = "app.bookflow.reader"
         minSdk = 26
         targetSdk = 35
-        versionCode = 14
-        versionName = "0.2.0-alpha10"
+        versionCode = 15
+        versionName = "0.2.0-alpha11"
+
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+        }
     }
 
     compileOptions {
@@ -23,6 +27,7 @@ android {
 
     kotlinOptions { jvmTarget = "17" }
     buildFeatures { compose = true }
+    androidResources { noCompress += "onnx" }
 }
 
 dependencies {
@@ -35,5 +40,6 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
+    implementation(files("libs/sherpa-onnx.aar"))
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

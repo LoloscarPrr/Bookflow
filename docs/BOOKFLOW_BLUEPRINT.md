@@ -79,11 +79,14 @@ A passage is generated ahead of playback so the next segment can be prepared whi
 ### Phase B — Narration Lab (next priority)
 Goal: prove that BookFlow can produce a short passage whose narration feels deliberately directed rather than like Android TTS.
 
-- [ ] `NarrationPlan` domain model
-- [ ] `SceneDirector` / AI provider interface
-- [ ] `VoiceRenderer` provider interface
-- [ ] `VoiceCast` model for stable narrator/character voices
-- [ ] narration segment/cache model
+- [x] `NarrationPlan` domain model
+- [x] `SceneDirector` / AI provider interface
+- [x] `VoiceRenderer` provider interface
+- [x] Spanish on-device neural renderer (Sherpa-ONNX + Piper, no credits)
+- [x] male/female narrator assignment from a two-speaker model
+- [x] local narration segment cache with reuse of legacy cloud segments
+- [ ] `VoiceCast` model for stable named-character voices
+- [ ] persistent narration segment/cache index and eviction
 - [ ] Narration Lab screen: select a passage, inspect the plan, generate and play
 - [ ] Media3 playback foundation
 - [ ] background playback via MediaSessionService
