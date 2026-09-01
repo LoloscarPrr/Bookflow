@@ -17,6 +17,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Configure Firebase Crashlytics when available
+        env:
+          FIREBASE_GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.FIREBASE_GOOGLE_SERVICES_JSON_BASE64 }}
+        shell: bash
+        run: |
+          if [[ -n "${FIREBASE_GOOGLE_SERVICES_JSON_BASE64:-}" ]]; then
+            printf '%s' "$FIREBASE_GOOGLE_SERVICES_JSON_BASE64" | base64 --decode > app/google-services.json
+            echo "Firebase Crashlytics configuration enabled."
+          else
+            echo "Firebase configuration absent; building with crash reporting inactive."
+          fi
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
@@ -35,6 +47,9 @@ jobs:
 
       - name: Prepare offline neural voice
         run: bash scripts/fetch-offline-tts.sh
+
+      - name: Run unit tests
+        run: gradle :app:testDebugUnitTest --stacktrace
 
       - name: Build debug APK
         run: gradle :app:assembleDebug --stacktrace

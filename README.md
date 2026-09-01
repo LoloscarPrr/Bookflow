@@ -8,7 +8,7 @@ BookFlow is an AI-native Android reading experience built around three equal pro
 
 ## Status
 
-Alpha 11 adds Spanish offline neural narration with Sherpa-ONNX + Piper. Narration runs locally, supports male/female speakers and caches generated WAV segments.
+Alpha 12 adds compact, regular and wide layouts plus privacy-safe Firebase Crashlytics diagnostics. Spanish neural narration continues to run locally with Sherpa-ONNX + Piper, supports male/female speakers and caches generated WAV segments without narration credits.
 
 ## Tech direction
 
@@ -31,3 +31,5 @@ gradle :app:assembleDebug
 ```
 
 See `docs/BOOKFLOW_BLUEPRINT.md` once the architecture branch lands.
+
+Crashlytics is activated only when a valid Firebase configuration is supplied. See `docs/CRASHLYTICS_SETUP.md`.

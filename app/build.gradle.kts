@@ -4,6 +4,13 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+val firebaseConfigured = file("google-services.json").isFile
+
+if (firebaseConfigured) {
+    apply(plugin = "com.google.gms.google-services")
+    apply(plugin = "com.google.firebase.crashlytics")
+}
+
 android {
     namespace = "app.bookflow.reader"
     compileSdk = 35
@@ -12,8 +19,9 @@ android {
         applicationId = "app.bookflow.reader"
         minSdk = 26
         targetSdk = 35
-        versionCode = 15
-        versionName = "0.2.0-alpha11"
+        versionCode = 16
+        versionName = "0.2.0-alpha12"
+        buildConfigField("boolean", "FIREBASE_CONFIGURED", firebaseConfigured.toString())
 
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
@@ -26,7 +34,10 @@ android {
     }
 
     kotlinOptions { jvmTarget = "17" }
-    buildFeatures { compose = true }
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
     androidResources { noCompress += "onnx" }
 }
 
@@ -41,5 +52,9 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
     implementation(files("libs/sherpa-onnx.aar"))
+    implementation(platform("com.google.firebase:firebase-bom:34.18.0"))
+    implementation("com.google.firebase:firebase-crashlytics")
+    implementation("com.google.firebase:firebase-crashlytics-ndk")
     debugImplementation("androidx.compose.ui:ui-tooling")
+    testImplementation("junit:junit:4.13.2")
 }

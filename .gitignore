@@ -9,3 +9,5 @@ local.properties
 app/libs/*.aar
 app/src/main/assets/vits-piper-es_ES-sharvard-medium/
 
+# Firebase Android configuration is supplied to CI through an encrypted secret.
+app/google-services.json

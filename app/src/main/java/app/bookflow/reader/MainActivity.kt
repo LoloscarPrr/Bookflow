@@ -31,7 +31,12 @@ import androidx.compose.ui.unit.dp
 import app.bookflow.reader.core.data.DocxTextExtractor
 import app.bookflow.reader.core.data.OfflineNeuralVoiceRenderer
 import app.bookflow.reader.core.data.RuleBasedSceneDirector
+import app.bookflow.reader.core.diagnostics.CrashReporter
+import app.bookflow.reader.core.diagnostics.DiagnosticArea
 import app.bookflow.reader.core.domain.BookDocument
+import app.bookflow.reader.presentation.BookFlowLayout
+import app.bookflow.reader.presentation.WIDE_STAGE_MAX_WIDTH_DP
+import app.bookflow.reader.presentation.rememberBookFlowLayout
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.text.PDFTextStripper
@@ -43,6 +48,7 @@ import kotlinx.coroutines.withContext
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        CrashReporter.initialize(applicationContext)
         PDFBoxResourceLoader.init(applicationContext)
         setContent { BookFlowApp() }
     }
@@ -52,6 +58,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun BookFlowApp() {
     val context = LocalContext.current
+    val layout = rememberBookFlowLayout()
     val renderer = remember(context.applicationContext) {
         OfflineNeuralVoiceRenderer(context.applicationContext)
     }
@@ -64,16 +71,20 @@ private fun BookFlowApp() {
                     uri,
                     android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION,
                 )
-            }
+            }.onFailure { CrashReporter.recordNonFatal(DiagnosticArea.URI_PERMISSION, it) }
             val mime = context.contentResolver.getType(uri).orEmpty()
             val title = queryDisplayName(context, uri) ?: "Libro"
             val text = when {
                 mime == "text/plain" || title.endsWith(".txt", true) -> runCatching {
                     context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+                }.onFailure {
+                    CrashReporter.recordNonFatal(DiagnosticArea.TEXT_IMPORT, it)
                 }.getOrNull()
 
                 mime.contains("wordprocessingml", true) || title.endsWith(".docx", true) -> runCatching {
                     context.contentResolver.openInputStream(uri)?.use(DocxTextExtractor::extract)
+                }.onFailure {
+                    CrashReporter.recordNonFatal(DiagnosticArea.DOCX_IMPORT, it)
                 }.getOrNull()
 
                 else -> null
@@ -86,30 +97,50 @@ private fun BookFlowApp() {
         onDispose { renderer.close() }
     }
 
+    LaunchedEffect(layout.layoutClass) {
+        CrashReporter.setLayoutClass(layout.layoutClass.name.lowercase())
+    }
+
     MaterialTheme {
         Surface(Modifier.fillMaxSize()) {
-            if (openedBook != null) {
-                ReaderScreen(
-                    book = openedBook!!,
-                    renderer = renderer,
-                    onBack = { openedBook = null },
-                )
-            } else {
-                Scaffold(topBar = { TopAppBar(title = { Text("BookFlow") }) }) { padding ->
-                    LibraryScreen(
-                        modifier = Modifier.padding(padding),
-                        book = importedBook,
-                        onImport = {
-                            launcher.launch(
-                                arrayOf(
-                                    "application/pdf",
-                                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                                    "text/plain",
-                                ),
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+                Box(
+                    Modifier
+                        .fillMaxHeight()
+                        .then(
+                            if (layout.isWide) {
+                                Modifier.widthIn(max = WIDE_STAGE_MAX_WIDTH_DP.dp).fillMaxWidth()
+                            } else {
+                                Modifier.fillMaxWidth()
+                            },
+                        ),
+                ) {
+                    if (openedBook != null) {
+                        ReaderScreen(
+                            book = openedBook!!,
+                            renderer = renderer,
+                            layout = layout,
+                            onBack = { openedBook = null },
+                        )
+                    } else {
+                        Scaffold(topBar = { TopAppBar(title = { Text("BookFlow") }) }) { padding ->
+                            LibraryScreen(
+                                modifier = Modifier.padding(padding),
+                                book = importedBook,
+                                layout = layout,
+                                onImport = {
+                                    launcher.launch(
+                                        arrayOf(
+                                            "application/pdf",
+                                            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                            "text/plain",
+                                        ),
+                                    )
+                                },
+                                onOpen = { openedBook = it },
                             )
-                        },
-                        onOpen = { openedBook = it },
-                    )
+                        }
+                    }
                 }
             }
         }
@@ -120,11 +151,12 @@ private fun BookFlowApp() {
 private fun LibraryScreen(
     modifier: Modifier,
     book: BookDocument?,
+    layout: BookFlowLayout,
     onImport: () -> Unit,
     onOpen: (BookDocument) -> Unit,
 ) {
     Column(
-        modifier.fillMaxSize().padding(20.dp),
+        modifier.fillMaxSize().padding(horizontal = layout.horizontalPadding, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Text("Tu biblioteca", style = MaterialTheme.typography.headlineMedium)
@@ -133,7 +165,12 @@ private fun LibraryScreen(
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.SemiBold,
         )
-        Button(onClick = onImport) { Text("Importar libro") }
+        Button(
+            onClick = onImport,
+            modifier = if (layout.isCompact) Modifier.fillMaxWidth() else Modifier,
+        ) {
+            Text("Importar libro")
+        }
         if (book == null) {
             Box(
                 Modifier.fillMaxWidth().weight(1f),
@@ -143,33 +180,51 @@ private fun LibraryScreen(
             }
         } else {
             Card(Modifier.fillMaxWidth().clickable { onOpen(book) }) {
-                Row(
-                    Modifier.padding(14.dp),
-                    horizontalArrangement = Arrangement.spacedBy(14.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    if (book.isPdf) {
-                        PdfCover(book.uriString, Modifier.width(105.dp).height(150.dp))
+                if (layout.isCompact) {
+                    Column(
+                        Modifier.padding(layout.cardPadding),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        if (book.isPdf) {
+                            PdfCover(book.uriString, Modifier.width(105.dp).height(150.dp))
+                        }
+                        BookSummary(book, Modifier.fillMaxWidth())
                     }
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            cleanBookTitle(book.title),
-                            style = MaterialTheme.typography.titleLarge,
-                            maxLines = 3,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        Spacer(Modifier.height(6.dp))
-                        Text(
-                            when {
-                                book.isPdf -> "PDF · lectura + voz neuronal local"
-                                book.textContent != null -> "Listo para narrar sin créditos"
-                                else -> "Documento importado"
-                            },
-                        )
+                } else {
+                    Row(
+                        Modifier.padding(layout.cardPadding),
+                        horizontalArrangement = Arrangement.spacedBy(14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        if (book.isPdf) {
+                            PdfCover(book.uriString, Modifier.width(105.dp).height(150.dp))
+                        }
+                        BookSummary(book, Modifier.weight(1f))
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun BookSummary(book: BookDocument, modifier: Modifier = Modifier) {
+    Column(modifier) {
+        Text(
+            cleanBookTitle(book.title),
+            style = MaterialTheme.typography.titleLarge,
+            maxLines = 3,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Spacer(Modifier.height(6.dp))
+        Text(
+            when {
+                book.isPdf -> "PDF · lectura + voz neuronal local"
+                book.textContent != null -> "Listo para narrar sin créditos"
+                else -> "Documento importado"
+            },
+        )
     }
 }
 
@@ -191,6 +246,7 @@ private fun PdfCover(uriString: String, modifier: Modifier) {
 private fun ReaderScreen(
     book: BookDocument,
     renderer: OfflineNeuralVoiceRenderer,
+    layout: BookFlowLayout,
     onBack: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -208,6 +264,9 @@ private fun ReaderScreen(
         if (book.isPdf) {
             pdfText = withContext(Dispatchers.IO) {
                 runCatching { extractPdfText(context, book.uriString) }
+                    .onFailure {
+                        CrashReporter.recordNonFatal(DiagnosticArea.PDF_EXTRACTION, it)
+                    }
                     .getOrNull()
                     ?.takeIf { it.isNotBlank() }
             }
@@ -287,9 +346,13 @@ private fun ReaderScreen(
                             status = "Pausado en ${((chunk.end.toFloat() / text.length) * 100).toInt()}%"
                         }
                     }
-                    setOnErrorListener { _, _, _ ->
+                    setOnErrorListener { _, what, extra ->
                         autoContinue = false
                         status = "No pude reproducir este tramo. Inténtalo otra vez."
+                        CrashReporter.recordNonFatal(
+                            DiagnosticArea.PLAYBACK,
+                            IllegalStateException("MediaPlayer error $what/$extra"),
+                        )
                         true
                     }
                     prepareAsync()
@@ -297,6 +360,7 @@ private fun ReaderScreen(
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
+                CrashReporter.recordNonFatal(DiagnosticArea.NARRATION, error)
                 if (requestToken == generationToken) {
                     autoContinue = false
                     status = "No pude iniciar la voz local: ${error.message ?: "error desconocido"}"
@@ -334,17 +398,25 @@ private fun ReaderScreen(
                     )
                 },
                 navigationIcon = {
-                    Button(onClick = onBack, modifier = Modifier.padding(horizontal = 6.dp)) {
-                        Text("Volver")
+                    if (layout.isCompact) {
+                        TextButton(onClick = onBack) { Text("Volver") }
+                    } else {
+                        Button(onClick = onBack, modifier = Modifier.padding(horizontal = 6.dp)) {
+                            Text("Volver")
+                        }
                     }
                 },
             )
         },
     ) { padding ->
         Column(Modifier.padding(padding).fillMaxSize()) {
-            Card(Modifier.fillMaxWidth().padding(12.dp)) {
+            Card(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = if (layout.isCompact) 8.dp else 12.dp, vertical = 8.dp),
+            ) {
                 Column(
-                    Modifier.padding(14.dp),
+                    Modifier.padding(layout.cardPadding),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Text(
@@ -358,31 +430,60 @@ private fun ReaderScreen(
                         progress = { progress / 100f },
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(
-                            enabled = narratable != null && !generating && !autoContinue,
-                            onClick = { startOrResume() },
+                    if (layout.isCompact) {
+                        Column(
+                            Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
-                            Text(
-                                when {
-                                    generating -> "Preparando…"
-                                    offset == 0 -> "Narrar"
-                                    else -> "Reanudar"
-                                },
-                            )
-                        }
-                        if (autoContinue || player != null || generating) {
-                            OutlinedButton(onClick = { stopNarration() }) { Text("Detener") }
-                        }
-                        if (offset > 0 && !autoContinue) {
-                            OutlinedButton(
-                                enabled = !generating,
-                                onClick = {
-                                    offset = (offset - NARRATION_CHUNK_SIZE).coerceAtLeast(0)
-                                    status = "Retrocediste un tramo."
-                                },
+                            Button(
+                                enabled = narratable != null && !generating && !autoContinue,
+                                onClick = { startOrResume() },
+                                modifier = Modifier.fillMaxWidth(),
                             ) {
-                                Text("Atrás")
+                                Text(narrationButtonLabel(generating, offset))
+                            }
+                            if (autoContinue || player != null || generating) {
+                                OutlinedButton(
+                                    onClick = { stopNarration() },
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Text("Detener")
+                                }
+                            }
+                            if (offset > 0 && !autoContinue) {
+                                OutlinedButton(
+                                    enabled = !generating,
+                                    onClick = {
+                                        offset = (offset - NARRATION_CHUNK_SIZE).coerceAtLeast(0)
+                                        status = "Retrocediste un tramo."
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Text("Atrás")
+                                }
+                            }
+                        }
+                    } else {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(
+                                enabled = narratable != null && !generating && !autoContinue,
+                                onClick = { startOrResume() },
+                            ) {
+                                Text(narrationButtonLabel(generating, offset))
+                            }
+                            if (autoContinue || player != null || generating) {
+                                OutlinedButton(onClick = { stopNarration() }) { Text("Detener") }
+                            }
+                            if (offset > 0 && !autoContinue) {
+                                OutlinedButton(
+                                    enabled = !generating,
+                                    onClick = {
+                                        offset = (offset - NARRATION_CHUNK_SIZE).coerceAtLeast(0)
+                                        status = "Retrocediste un tramo."
+                                    },
+                                ) {
+                                    Text("Atrás")
+                                }
                             }
                         }
                     }
@@ -391,9 +492,12 @@ private fun ReaderScreen(
             }
 
             when {
-                book.isPdf -> Box(Modifier.weight(1f)) { PdfBookReader(book.uriString) }
+                book.isPdf -> Box(Modifier.weight(1f)) { PdfBookReader(book.uriString, layout) }
                 book.textContent != null -> Column(
-                    Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(20.dp),
+                    Modifier
+                        .weight(1f)
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = layout.horizontalPadding, vertical = 20.dp),
                 ) {
                     Text(book.textContent, style = MaterialTheme.typography.bodyLarge)
                 }
@@ -404,6 +508,12 @@ private fun ReaderScreen(
             }
         }
     }
+}
+
+private fun narrationButtonLabel(generating: Boolean, offset: Int): String = when {
+    generating -> "Preparando…"
+    offset == 0 -> "Narrar"
+    else -> "Reanudar"
 }
 
 private data class NarrationChunk(val text: String, val end: Int)
@@ -450,15 +560,23 @@ private fun extractPdfText(context: Context, uriString: String): String {
 }
 
 @Composable
-private fun PdfBookReader(uriString: String) {
+private fun PdfBookReader(uriString: String, layout: BookFlowLayout) {
     val context = LocalContext.current
     var renderer by remember(uriString) { mutableStateOf<PdfRenderer?>(null) }
     var descriptor by remember(uriString) { mutableStateOf<ParcelFileDescriptor?>(null) }
     DisposableEffect(uriString) {
         descriptor = runCatching {
             context.contentResolver.openFileDescriptor(Uri.parse(uriString), "r")
+        }.onFailure {
+            CrashReporter.recordNonFatal(DiagnosticArea.PDF_OPEN, it)
         }.getOrNull()
-        renderer = descriptor?.let { runCatching { PdfRenderer(it) }.getOrNull() }
+        renderer = descriptor?.let {
+            runCatching { PdfRenderer(it) }
+                .onFailure { error ->
+                    CrashReporter.recordNonFatal(DiagnosticArea.PDF_OPEN, error)
+                }
+                .getOrNull()
+        }
         onDispose {
             runCatching { renderer?.close() }
             runCatching { descriptor?.close() }
@@ -471,7 +589,10 @@ private fun PdfBookReader(uriString: String) {
     ) { Text("Abriendo PDF…") }
 
     Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(8.dp),
+        Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(if (layout.isCompact) 4.dp else 8.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         for (index in 0 until pdf.pageCount) {
@@ -496,6 +617,8 @@ private fun renderPdfPageFromUri(
     context.contentResolver.openFileDescriptor(Uri.parse(uri), "r")?.use { descriptor ->
         PdfRenderer(descriptor).use { renderer -> renderPdfPage(renderer, index, scale) }
     }
+}.onFailure {
+    CrashReporter.recordNonFatal(DiagnosticArea.PDF_RENDER, it)
 }.getOrNull()
 
 private fun renderPdfPage(renderer: PdfRenderer, index: Int, scale: Float): Bitmap? = runCatching {
@@ -509,6 +632,8 @@ private fun renderPdfPage(renderer: PdfRenderer, index: Int, scale: Float): Bitm
             page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
         }
     }
+}.onFailure {
+    CrashReporter.recordNonFatal(DiagnosticArea.PDF_RENDER, it)
 }.getOrNull()
 
 private val BookDocument.isPdf: Boolean
