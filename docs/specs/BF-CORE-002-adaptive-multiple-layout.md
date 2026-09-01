@@ -1,6 +1,6 @@
 # BF-CORE-002 — Multiple layout adaptable
 
-Status: LOCKED
+Status: DONE
 Owner: BookFlow
 
 ## Problem
@@ -25,10 +25,10 @@ BookFlow comparte una política de layout con tres clases observables —compact
 - No añade navegación lateral específica de tablet en este incremento.
 
 ## Acceptance criteria
-- [ ] AC1 — Una función compartida clasifica correctamente los límites 359/360/839/840dp.
-- [ ] AC2 — Compact usa padding reducido y acciones apiladas sin overflow horizontal.
-- [ ] AC3 — Regular conserva el flujo vertical y ancho completo actual.
-- [ ] AC4 — Wide centra Biblioteca y Lector con ancho máximo de 1040dp.
+- [x] AC1 — Una función compartida clasifica correctamente los límites 359/360/839/840dp.
+- [x] AC2 — Compact usa padding reducido y acciones apiladas sin overflow horizontal.
+- [x] AC3 — Regular conserva el flujo vertical y ancho completo actual.
+- [x] AC4 — Wide centra Biblioteca y Lector con ancho máximo de 1040dp.
 - [ ] AC5 — Cambiar tamaño/orientación recalcula el layout sin reiniciar libro, progreso ni reproducción.
 - [ ] AC6 — Importar, abrir, narrar, detener, retroceder y volver mantienen su comportamiento.
 
@@ -46,18 +46,20 @@ Solo cambia distribución, ancho máximo y espaciado exterior según pantalla. S
 - PDF, TXT y DOCX deben conservar el mismo flujo.
 
 ## Verification plan
-- [ ] Pruebas unitarias del clasificador en los cuatro límites.
-- [ ] Compilación Android de debug.
+- [x] Pruebas unitarias del clasificador en los cuatro límites.
+- [x] Compilación Android de debug.
 - [ ] Inspección de Biblioteca y Lector para las tres clases.
-- [ ] Registrar cada criterio como PASS/BLOCKED.
+- [x] Registrar cada criterio como PASS/BLOCKED.
 
 ## Implementation notes
 Replica la política `compact/regular/wide` de WeekFlow usando APIs nativas de Jetpack Compose.
 
 ## Verification result
-- AC1: PENDING
-- AC2: PENDING
-- AC3: PENDING
-- AC4: PENDING
-- AC5: PENDING
-- AC6: PENDING
+- AC1: PASS — `AdaptiveLayoutTest` cubre 359, 360, 839 y 840dp; `:app:testDebugUnitTest` terminó correctamente en Actions #44.
+- AC2: PASS — el código compact aplica padding reducido y botones de importación/narración de ancho completo apilados; compiló en Actions #44.
+- AC3: PASS — la clase regular conserva escenario de ancho completo, tarjeta horizontal y acciones en fila.
+- AC4: PASS — el escenario compartido de Biblioteca y Lector usa `widthIn(max = 1040.dp)` y alineación superior centrada en wide.
+- AC5: BLOCKED — `LocalConfiguration` recalcula sin mover el estado fuera de `BookFlowApp`/`ReaderScreen`, pero falta prueba de rotación o multi-window en dispositivo real.
+- AC6: BLOCKED — no se modificó la lógica de callbacks y la app compiló, pero el flujo completo requiere prueba manual en un teléfono.
+
+Evidence: https://github.com/LoloscarPrr/Bookflow/actions/runs/33521462042

@@ -1,6 +1,6 @@
 # BF-RELEASE-001 — Diagnóstico con Firebase Crashlytics
 
-Status: LOCKED
+Status: DONE
 Owner: BookFlow
 
 ## Problem
@@ -26,13 +26,13 @@ BookFlow queda integrado con Firebase Crashlytics y Crashlytics NDK cuando exist
 - No afirmar recepción en el panel hasta probarla con configuración y dispositivo reales.
 
 ## Acceptance criteria
-- [ ] AC1 — Gradle usa Google Services 4.5.0, Crashlytics plugin 3.0.8 y Firebase BoM 34.18.0.
+- [x] AC1 — Gradle usa Google Services 4.5.0, Crashlytics plugin 3.0.8 y Firebase BoM 34.18.0.
 - [ ] AC2 — El APK compila con y sin `google-services.json`; sin configuración el reporter queda inactivo de forma segura.
 - [ ] AC3 — Con configuración válida se habilita captura automática de cierres, ANR y fallos NDK.
-- [ ] AC4 — Errores capturados de importación, extracción PDF, narración y reproducción se registran como no fatales.
-- [ ] AC5 — Los reportes no adjuntan texto/título del libro, URI, nombre de usuario ni otro contenido personal.
-- [ ] AC6 — El workflow acepta el secreto opcional `FIREBASE_GOOGLE_SERVICES_JSON_BASE64` sin imprimirlo.
-- [ ] AC7 — No se entrega ninguna acción visible que provoque un crash intencional.
+- [x] AC4 — Errores capturados de importación, extracción PDF, narración y reproducción se registran como no fatales.
+- [x] AC5 — Los reportes no adjuntan texto/título del libro, URI, nombre de usuario ni otro contenido personal.
+- [x] AC6 — El workflow acepta el secreto opcional `FIREBASE_GOOGLE_SERVICES_JSON_BASE64` sin imprimirlo.
+- [x] AC7 — No se entrega ninguna acción visible que provoque un crash intencional.
 
 ## Data / persistence impact
 No cambia datos locales. Cuando Firebase esté conectado, Crashlytics enviará diagnósticos técnicos por Internet según su configuración.
@@ -48,20 +48,22 @@ No hay controles nuevos. Los estados de error actuales permanecen visibles para 
 - Build de CI sin secretos.
 
 ## Verification plan
-- [ ] Compilar en CI sin secreto Firebase.
-- [ ] Inspeccionar que no exista botón/test crash.
-- [ ] Verificar llamadas de errores no fatales y sanitización de metadata.
+- [x] Compilar en CI sin secreto Firebase.
+- [x] Inspeccionar que no exista botón/test crash.
+- [x] Verificar llamadas de errores no fatales y sanitización de metadata.
 - [ ] Probar recepción en dashboard cuando exista configuración Firebase real.
-- [ ] Registrar cada criterio como PASS/BLOCKED.
+- [x] Registrar cada criterio como PASS/BLOCKED.
 
 ## Implementation notes
 Referencia oficial: https://firebase.google.com/docs/crashlytics/android/get-started y https://firebase.google.com/docs/crashlytics/android/get-started-ndk.
 
 ## Verification result
-- AC1: PENDING
-- AC2: PENDING
-- AC3: PENDING
-- AC4: PENDING
-- AC5: PENDING
-- AC6: PENDING
-- AC7: PENDING
+- AC1: PASS — Actions #44 resolvió y compiló las versiones fijadas de ambos plugins, el BoM y Crashlytics/NDK.
+- AC2: BLOCKED — el camino sin configuración produjo el APK correctamente y el reporter quedó inactivo; el camino con un `google-services.json` real espera la configuración externa.
+- AC3: BLOCKED — el APK contiene las bibliotecas Crashlytics NDK para ARM64 y ARMv7, pero la recepción de cierres/ANR/NDK requiere Firebase y un dispositivo real.
+- AC4: PASS — importación TXT/DOCX, permisos URI, apertura/extracción/render PDF, narración y MediaPlayer llaman al reporter central.
+- AC5: PASS — el reporter usa áreas enumeradas y reemplaza cada excepción por tipo + stack trace, descartando el mensaje original; no recibe título, URI, texto ni identidad.
+- AC6: PASS — el workflow reconstruye el JSON desde el secreto opcional y Actions #44 confirmó el camino ausente sin exponer contenido.
+- AC7: PASS — no existe acción, texto ni callback de test crash en la interfaz.
+
+Evidence: https://github.com/LoloscarPrr/Bookflow/actions/runs/33521462042; APK SHA-256 `407948394f17f92d4c2c128a8a631b42bceebfc7234124b57724622b1cb6da43`.
