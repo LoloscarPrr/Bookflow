@@ -1,6 +1,6 @@
 # BF-RELEASE-001 — Diagnóstico con Firebase Crashlytics
 
-Status: DONE
+Status: VERIFYING
 Owner: BookFlow
 
 ## Problem
@@ -53,6 +53,11 @@ No hay controles nuevos. Los estados de error actuales permanecen visibles para 
 - [x] Verificar llamadas de errores no fatales y sanitización de metadata.
 - [ ] Probar recepción en dashboard cuando exista configuración Firebase real.
 - [x] Registrar cada criterio como PASS/BLOCKED.
+
+## Active verification scope
+- Build de CI con la configuración suministrada para `bookflow-ae680` / `app.bookflow.reader`.
+- Confirmar que Gradle ejecuta Google Services y genera símbolos/mapping de Crashlytics sin incluir el JSON en Git.
+- No objetivo: provocar un cierre real o afirmar recepción en Firebase sin evidencia de dispositivo/panel.
 
 ## Implementation notes
 Referencia oficial: https://firebase.google.com/docs/crashlytics/android/get-started y https://firebase.google.com/docs/crashlytics/android/get-started-ndk.

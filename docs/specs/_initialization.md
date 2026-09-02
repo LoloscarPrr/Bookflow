@@ -4,11 +4,11 @@
 - Repository: `LoloscarPrr/Bookflow`
 - Base ref: `main`
 - Working ref: `feature/ai-native-foundation`
-- Latest relevant commit: `84bd9a39d6d9c50c94355f5d20d5b7564d2ef228` — offline neural narration.
+- Latest relevant local commit: `46e824e` — alpha12 verification; remote branch contains the equivalent alpha12 implementation and evidence.
 
 ## App / build state
-- App version: `0.2.0-alpha11`.
-- Android versionCode: `15`.
+- App version: `0.2.0-alpha13`.
+- Android versionCode: `17`.
 - Application ID: `app.bookflow.reader`.
 - Minimum Android: API 26.
 
@@ -29,15 +29,16 @@
 
 ## Baseline
 - Source inspection: PASS.
-- Local static/unit checks: NOT RUN; no Gradle/Kotlin toolchain is installed in this workspace.
-- Local Android build: UNAVAILABLE; no Android SDK.
-- Last branch CI: PASS — GitHub Actions run #43 at commit `84bd9a3`.
+- Local static/unit checks: UNAVAILABLE; this environment has Java but no Gradle/Android SDK.
+- Local Android build: UNAVAILABLE; verification will run in GitHub Actions.
+- Last branch CI: PASS — GitHub Actions run #44 without Firebase configuration.
 - Physical compact/regular/wide rendering: UNAVAILABLE.
 
 ## Constraints / uncertainties
-- No Firebase project or `google-services.json` exists for BookFlow.
+- A valid Firebase configuration for project `bookflow-ae680` and package `app.bookflow.reader` was supplied for local verification. It remains ignored and outside Git history.
+- GitHub secret `FIREBASE_GOOGLE_SERVICES_JSON_BASE64` is configured; its value remains encrypted and outside Git history.
 - CI must remain buildable without Firebase configuration.
 - Dashboard delivery and physical layout behavior require later real-device evidence.
 
 ## Next TLC action
-- Implement `BF-CORE-001`, then `BF-CORE-002` and `BF-RELEASE-001` in the same user-requested delivery while preserving their independent acceptance criteria.
+- Verify `BF-RELEASE-001` with the supplied Firebase configuration, package the Firebase-enabled APK, and retain device/dashboard receipt as a separate physical-device check.
