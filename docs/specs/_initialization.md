@@ -4,7 +4,7 @@
 - Repository: `LoloscarPrr/Bookflow`
 - Base ref: `main`
 - Working ref: `feature/ai-native-foundation`
-- Latest relevant local commit: `46e824e` — alpha12 verification; remote branch contains the equivalent alpha12 implementation and evidence.
+- Latest relevant remote commit: `6b73975c526fabb55b01b99f5be1664138ece1b9` — Firebase-enabled alpha13 verification build.
 
 ## App / build state
 - App version: `0.2.0-alpha13`.
@@ -30,7 +30,7 @@
 ## Baseline
 - Source inspection: PASS.
 - Local static/unit checks: UNAVAILABLE; this environment has Java but no Gradle/Android SDK.
-- Local Android build: UNAVAILABLE; verification will run in GitHub Actions.
+- GitHub Actions unit tests and build: PASS — run #45 with Firebase configuration.
 - Last branch CI: PASS — GitHub Actions run #44 without Firebase configuration.
 - Physical compact/regular/wide rendering: UNAVAILABLE.
 
@@ -41,4 +41,4 @@
 - Dashboard delivery and physical layout behavior require later real-device evidence.
 
 ## Next TLC action
-- Verify `BF-RELEASE-001` with the supplied Firebase configuration, package the Firebase-enabled APK, and retain device/dashboard receipt as a separate physical-device check.
+- Install alpha13 on a physical device and confirm the first non-fatal/crash diagnostic appears in the Firebase dashboard without adding a deliberate crash control.
