@@ -88,8 +88,8 @@ Goal: prove that BookFlow can produce a short passage whose narration feels deli
 - [ ] `VoiceCast` model for stable named-character voices
 - [ ] persistent narration segment/cache index and eviction
 - [ ] Narration Lab screen: select a passage, inspect the plan, generate and play
-- [ ] Media3 playback foundation
-- [ ] background playback via MediaSessionService
+- [x] Media3 playback foundation
+- [x] background playback via MediaSessionService
 
 Acceptance gate: a short passage has natural voice delivery and the same character keeps the same assigned voice across segments.
 
@@ -111,7 +111,7 @@ Acceptance gate: soundtrack supports the narration without masking speech or sou
 - [ ] character memory and aliases
 
 ### Phase E — Production narration
-- [ ] pre-generation queue
+- [x] pre-generation queue
 - [ ] resilient retries
 - [ ] local audio cache and eviction
 - [ ] offline replay of generated segments

@@ -29,4 +29,15 @@ class NarrationPlaybackStateTest {
         assertEquals(25, narrationProgressPercent(250, 1_000))
         assertEquals(100, narrationProgressPercent(2_000, 1_000))
     }
+
+    @Test fun playbackOffsetAdvancesInsideCurrentChunk() {
+        assertEquals(1_000, narrationOffsetForPlayback(1_000, 2_000, 0, 10_000))
+        assertEquals(1_500, narrationOffsetForPlayback(1_000, 2_000, 5_000, 10_000))
+        assertEquals(2_000, narrationOffsetForPlayback(1_000, 2_000, 12_000, 10_000))
+    }
+
+    @Test fun playbackOffsetFallsBackSafelyWithoutDuration() {
+        assertEquals(300, narrationOffsetForPlayback(300, 900, 200, 0))
+        assertEquals(300, narrationOffsetForPlayback(300, 200, 200, 1_000))
+    }
 }

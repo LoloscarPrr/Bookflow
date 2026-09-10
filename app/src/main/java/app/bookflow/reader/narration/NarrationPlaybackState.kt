@@ -66,6 +66,20 @@ fun narrationProgressPercent(offset: Int, totalChars: Int): Int {
     return ((offset.coerceIn(0, totalChars).toLong() * 100L) / totalChars).toInt()
 }
 
+fun narrationOffsetForPlayback(
+    chunkStart: Int,
+    chunkEnd: Int,
+    positionMs: Long,
+    durationMs: Long,
+): Int {
+    val safeStart = chunkStart.coerceAtLeast(0)
+    val safeEnd = chunkEnd.coerceAtLeast(safeStart)
+    if (durationMs <= 0L || safeEnd == safeStart) return safeStart
+    val position = positionMs.coerceIn(0L, durationMs)
+    val travelled = ((safeEnd - safeStart).toLong() * position / durationMs).toInt()
+    return (safeStart + travelled).coerceIn(safeStart, safeEnd)
+}
+
 fun cleanNarratableText(text: String): String = text
     .replace(Regex("(?m)^\\s*\\d+\\s*$"), "")
     .replace(Regex("[ \\t]+"), " ")

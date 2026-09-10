@@ -41,6 +41,7 @@ class OfflineNeuralVoiceRenderer(private val context: Context) : VoiceRenderer, 
             val cacheKey = sha256(
                 listOf(
                     MODEL_VERSION,
+                    RENDER_PROFILE,
                     speakerId,
                     plan.mood,
                     plan.pace,
@@ -99,7 +100,10 @@ class OfflineNeuralVoiceRenderer(private val context: Context) : VoiceRenderer, 
                 provider = "cpu",
             ),
             maxNumSentences = 1,
-            silenceScale = 0.25f,
+            // Piper's default sentence gaps were too abrupt for long-form listening.
+            // Keep punctuation in the passage and give sentence boundaries their
+            // natural duration instead of compressing them to a quarter.
+            silenceScale = 1.0f,
         )
         return OfflineTts(assetManager = context.assets, config = config)
     }
@@ -177,6 +181,7 @@ class OfflineNeuralVoiceRenderer(private val context: Context) : VoiceRenderer, 
 
     private companion object {
         const val MODEL_VERSION = "piper-sharvard-medium-v1"
+        const val RENDER_PROFILE = "natural-pauses-v2"
         const val MODEL_ASSET_DIR = "vits-piper-es_ES-sharvard-medium"
         const val MODEL_FILE = "es_ES-sharvard-medium.onnx"
         const val MODEL_ARCHIVE_SHA256 = "b30a7a83df0518f0ee1c7039506648cade99f1f9b498fc49ed2ced2e2536bb5a"
@@ -191,4 +196,3 @@ class OfflineNeuralVoiceRenderer(private val context: Context) : VoiceRenderer, 
         const val LEGACY_FEMALE_VOICE_ID = "21m00Tcm4TlvDq8ikWAM"
     }
 }
-

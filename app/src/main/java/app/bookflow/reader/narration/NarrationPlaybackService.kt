@@ -21,7 +21,15 @@ import app.bookflow.reader.core.diagnostics.CrashReporter
 import app.bookflow.reader.core.diagnostics.DiagnosticArea
 import app.bookflow.reader.core.domain.BookDocument
 import java.io.File
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 
 @UnstableApi
 class NarrationPlaybackService : MediaSessionService() {
@@ -32,14 +40,16 @@ class NarrationPlaybackService : MediaSessionService() {
     private lateinit var renderer: OfflineNeuralVoiceRenderer
     private lateinit var loader: DocumentTextLoader
     private lateinit var store: BookSessionStore
-    private var generationJob: Job? = null
+    private var loadJob: Job? = null
+    private var queueJob: Job? = null
+    private var progressJob: Job? = null
     private var generationToken = 0L
     private var currentBook: BookDocument? = null
     private var currentText: String? = null
-    private var chunkStart = 0
-    private var chunkEnd = 0
+    private var activeChunk: NarrationChunk? = null
+    private var nextChunkOffset = 0
     private var autoContinue = false
-    private var completedChunkHandled = false
+    private val chunksByMediaId = mutableMapOf<String, NarrationChunk>()
 
     override fun onCreate() {
         super.onCreate()
@@ -60,6 +70,12 @@ class NarrationPlaybackService : MediaSessionService() {
             addListener(playbackListener)
         }
         mediaSession = MediaSession.Builder(this, player).build()
+        progressJob = serviceScope.launch {
+            while (isActive) {
+                delay(PROGRESS_UPDATE_MS)
+                if (player.isPlaying) publishLiveProgress()
+            }
+        }
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession = mediaSession
@@ -81,109 +97,148 @@ class NarrationPlaybackService : MediaSessionService() {
             intent.getStringExtra(EXTRA_MIME).orEmpty(),
         )
         val requested = intent.getIntExtra(EXTRA_OFFSET, store.loadNarrationOffset(uri))
-        if (currentBook?.uriString == uri && player.mediaItemCount > 0 && player.playbackState != Player.STATE_ENDED) {
+        if (currentBook?.uriString == uri && player.mediaItemCount > 0) {
             autoContinue = true
             player.play()
+            ensureQueue()
             return
         }
 
-        generationJob?.cancel()
+        cancelPendingWork()
         generationToken += 1
         autoContinue = true
-        completedChunkHandled = false
         player.stop()
         player.clearMediaItems()
+        chunksByMediaId.clear()
+        activeChunk = null
         currentBook = book
         currentText = null
-        chunkStart = requested.coerceAtLeast(0)
-        chunkEnd = chunkStart
+        nextChunkOffset = requested.coerceAtLeast(0)
         store.saveLastBook(book)
         updateState(
             NarrationPlaybackPhase.PREPARING,
-            chunkStart,
+            nextChunkOffset,
             0,
-            if (chunkStart == 0) "Preparando voz neuronal local…" else "Recuperando tu narración…",
+            if (nextChunkOffset == 0) "Preparando voz neuronal local…" else "Recuperando tu narración…",
         )
 
-        val loadToken = generationToken
-        generationJob = serviceScope.launch {
+        val token = generationToken
+        loadJob = serviceScope.launch {
             try {
                 val text = cleanNarratableText(loader.load(book))
                 check(text.isNotBlank())
-                if (loadToken != generationToken || !autoContinue) return@launch
+                if (token != generationToken || !autoContinue) return@launch
                 currentText = text
-                generationJob = null
-                val offset = requested.coerceIn(0, text.length)
-                if (offset >= text.length) {
-                    store.saveNarrationOffset(uri, 0)
-                    renderChunk(0)
-                } else {
-                    renderChunk(offset)
+                nextChunkOffset = requested.coerceIn(0, text.length).let {
+                    if (it >= text.length) 0 else it
+                }
+                if (requested >= text.length) store.saveNarrationOffset(uri, 0)
+                loadJob = null
+                ensureQueue()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                failNarration(error)
+            }
+        }
+    }
+
+    private fun ensureQueue() {
+        val text = currentText ?: return
+        if (!autoContinue || queueJob?.isActive == true || nextChunkOffset >= text.length) return
+        val token = generationToken
+        queueJob = serviceScope.launch {
+            try {
+                while (
+                    autoContinue && token == generationToken && nextChunkOffset < text.length &&
+                    preparedAheadCount() < PREFETCH_AHEAD_COUNT
+                ) {
+                    val chunk = nextNarrationChunk(text, nextChunkOffset)
+                    if (chunk.text.isBlank()) break
+                    if (player.mediaItemCount == 0) {
+                        updateState(
+                            NarrationPlaybackPhase.PREPARING,
+                            chunk.start,
+                            text.length,
+                            "Preparando voz neuronal local…",
+                        )
+                    }
+                    val plan = director.createPlan(chunk.text)
+                    val segment = renderer.render(plan, plan.speakerId)
+                    if (!autoContinue || token != generationToken) return@launch
+
+                    val mediaId = "narration-${token}-${chunk.start}-${chunk.end}"
+                    chunksByMediaId[mediaId] = chunk
+                    nextChunkOffset = chunk.end
+                    addPreparedItem(
+                        MediaItem.Builder()
+                            .setMediaId(mediaId)
+                            .setUri(Uri.fromFile(File(segment.localUri)))
+                            .setMediaMetadata(
+                                MediaMetadata.Builder()
+                                    .setTitle(displayTitle(currentBook?.title.orEmpty()))
+                                    .setArtist("BookFlow · ${plan.speakerLabel}")
+                                    .build(),
+                            )
+                            .build(),
+                    )
                 }
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
-                failNarration(error)
+                if (player.mediaItemCount == 0 || player.playbackState == Player.STATE_ENDED) {
+                    failNarration(error)
+                } else {
+                    CrashReporter.recordNonFatal(DiagnosticArea.NARRATION, error)
+                    updateState(
+                        NarrationPlaybackPhase.PLAYING,
+                        currentPlaybackOffset(),
+                        text.length,
+                        "Reproduciendo · reintentaremos preparar el próximo tramo",
+                    )
+                }
+            } finally {
+                queueJob = null
             }
         }
     }
 
-    private fun renderChunk(start: Int) {
-        val book = currentBook ?: return
-        val text = currentText ?: return
-        val chunk = nextNarrationChunk(text, start)
-        if (chunk.text.isBlank()) {
-            finishBook(text.length)
-            return
-        }
-
-        generationJob?.cancel()
-        val token = ++generationToken
-        chunkStart = chunk.start
-        chunkEnd = chunk.end
-        completedChunkHandled = false
-        updateState(
-            NarrationPlaybackPhase.PREPARING,
-            chunkStart,
-            text.length,
-            if (chunkStart == 0) "Preparando voz neuronal local…" else "Preparando el siguiente tramo…",
-        )
-        generationJob = serviceScope.launch {
-            try {
-                val plan = director.createPlan(chunk.text)
-                val segment = renderer.render(plan, plan.speakerId)
-                if (token != generationToken || !autoContinue) return@launch
-                val item = MediaItem.Builder()
-                    .setMediaId("bookflow-narration")
-                    .setUri(Uri.fromFile(File(segment.localUri)))
-                    .setMediaMetadata(
-                        MediaMetadata.Builder()
-                            .setTitle(displayTitle(book.title))
-                            .setArtist("BookFlow · ${plan.speakerLabel}")
-                            .build(),
-                    )
-                    .build()
-                player.setMediaItem(item)
+    private fun addPreparedItem(item: MediaItem) {
+        val wasEmpty = player.mediaItemCount == 0
+        val hadEnded = player.playbackState == Player.STATE_ENDED
+        player.addMediaItem(item)
+        when {
+            wasEmpty -> {
                 player.prepare()
-                player.play()
-            } catch (error: CancellationException) {
-                throw error
-            } catch (error: Exception) {
-                failNarration(error)
+                if (autoContinue) player.play()
+            }
+            hadEnded -> {
+                if (player.hasNextMediaItem()) player.seekToNextMediaItem()
+                player.prepare()
+                if (autoContinue) player.play()
             }
         }
+    }
+
+    private fun preparedAheadCount(): Int {
+        if (player.mediaItemCount == 0) return 0
+        val current = player.currentMediaItemIndex.coerceAtLeast(0)
+        return (player.mediaItemCount - current - 1).coerceAtLeast(0)
     }
 
     private fun stopNarration() {
-        cancelGeneration()
-        persistOffset(chunkStart)
+        val offset = currentPlaybackOffset()
+        cancelPendingWork()
+        persistOffset(offset)
         player.stop()
         player.clearMediaItems()
+        chunksByMediaId.clear()
+        activeChunk = null
         updateState(
             NarrationPlaybackPhase.PAUSED,
-            chunkStart,
+            offset,
             currentText?.length ?: 0,
-            "Narración detenida en ${progress(chunkStart)}%.",
+            "Narración detenida en ${progress(offset)}%.",
         )
         stopSelf()
     }
@@ -192,14 +247,16 @@ class NarrationPlaybackService : MediaSessionService() {
         val uri = intent.getStringExtra(EXTRA_URI) ?: currentBook?.uriString ?: return
         val active = currentBook?.uriString == uri
         val total = if (active) currentText?.length ?: 0 else NarrationPlaybackStateHolder.state.value.totalChars
-        val offset = rewindNarrationOffset(if (active) chunkStart else store.loadNarrationOffset(uri))
+        val currentOffset = if (active) currentPlaybackOffset() else store.loadNarrationOffset(uri)
+        val offset = rewindNarrationOffset(currentOffset)
         if (active) {
-            cancelGeneration()
+            cancelPendingWork()
             player.stop()
             player.clearMediaItems()
+            chunksByMediaId.clear()
+            activeChunk = null
         }
-        chunkStart = offset
-        chunkEnd = offset
+        nextChunkOffset = offset
         store.saveNarrationOffset(uri, offset)
         NarrationPlaybackStateHolder.update(
             NarrationPlaybackState(uri, offset, total, NarrationPlaybackPhase.PAUSED, "Retrocediste un tramo."),
@@ -207,18 +264,24 @@ class NarrationPlaybackService : MediaSessionService() {
         if (active) stopSelf()
     }
 
-    private fun completeChunk() {
-        if (completedChunkHandled || chunkEnd <= chunkStart) return
-        completedChunkHandled = true
+    private fun currentPlaybackOffset(): Int {
+        val chunk = activeChunk ?: return NarrationPlaybackStateHolder.state.value.offset
+        val duration = player.duration.takeIf { it != C.TIME_UNSET } ?: 0L
+        return narrationOffsetForPlayback(chunk.start, chunk.end, player.currentPosition, duration)
+    }
+
+    private fun publishLiveProgress() {
         val text = currentText ?: return
-        persistOffset(chunkEnd)
-        if (autoContinue && chunkEnd < text.length) {
-            player.stop()
-            player.clearMediaItems()
-            renderChunk(chunkEnd)
-        } else if (chunkEnd >= text.length) {
-            finishBook(text.length)
-        }
+        updateState(
+            NarrationPlaybackPhase.PLAYING,
+            currentPlaybackOffset(),
+            text.length,
+            if (preparedAheadCount() > 0) {
+                "Reproduciendo sin pausas · audio preparado por adelantado"
+            } else {
+                "Reproduciendo · preparando el próximo tramo"
+            },
+        )
     }
 
     private fun finishBook(total: Int) {
@@ -226,11 +289,16 @@ class NarrationPlaybackService : MediaSessionService() {
         persistOffset(total)
         updateState(NarrationPlaybackPhase.COMPLETED, total, total, "Llegaste al final del libro.")
         player.clearMediaItems()
+        chunksByMediaId.clear()
+        activeChunk = null
         stopSelf()
     }
 
-    private fun cancelGeneration() {
-        generationJob?.cancel()
+    private fun cancelPendingWork() {
+        loadJob?.cancel()
+        queueJob?.cancel()
+        loadJob = null
+        queueJob = null
         generationToken += 1
         autoContinue = false
     }
@@ -241,15 +309,18 @@ class NarrationPlaybackService : MediaSessionService() {
 
     private fun failNarration(error: Exception) {
         autoContinue = false
-        persistOffset(chunkStart)
+        val offset = currentPlaybackOffset()
+        persistOffset(offset)
         CrashReporter.recordNonFatal(DiagnosticArea.NARRATION, error)
         updateState(
             NarrationPlaybackPhase.ERROR,
-            chunkStart,
+            offset,
             currentText?.length ?: 0,
             "No pude iniciar la voz local. Inténtalo otra vez.",
         )
         player.clearMediaItems()
+        chunksByMediaId.clear()
+        activeChunk = null
         stopSelf()
     }
 
@@ -268,44 +339,69 @@ class NarrationPlaybackService : MediaSessionService() {
     private fun progress(offset: Int) = narrationProgressPercent(offset, currentText?.length ?: 0)
 
     private val playbackListener = object : Player.Listener {
+        override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+            val previous = activeChunk
+            val next = mediaItem?.mediaId?.let(chunksByMediaId::get) ?: return
+            if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO && previous != null) {
+                persistOffset(previous.end)
+            }
+            activeChunk = next
+            if (player.isPlaying) publishLiveProgress()
+            ensureQueue()
+        }
+
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             val text = currentText ?: return
             if (isPlaying) {
-                updateState(
-                    NarrationPlaybackPhase.PLAYING,
-                    chunkStart,
-                    text.length,
-                    "Reproduciendo en segundo plano · sin créditos",
-                )
+                publishLiveProgress()
+                ensureQueue()
             } else if (
                 NarrationPlaybackStateHolder.state.value.phase == NarrationPlaybackPhase.PLAYING &&
                 player.playbackState != Player.STATE_ENDED
             ) {
-                persistOffset(chunkStart)
+                val offset = currentPlaybackOffset()
+                persistOffset(offset)
                 updateState(
                     NarrationPlaybackPhase.PAUSED,
-                    chunkStart,
+                    offset,
                     text.length,
-                    "Pausado en ${progress(chunkStart)}%.",
+                    "Pausado en ${progress(offset)}%.",
                 )
             }
         }
 
         override fun onPlaybackStateChanged(playbackState: Int) {
-            if (playbackState == Player.STATE_ENDED) completeChunk()
+            if (playbackState != Player.STATE_ENDED) return
+            val text = currentText ?: return
+            val completed = activeChunk?.end ?: currentPlaybackOffset()
+            persistOffset(completed)
+            if (nextChunkOffset >= text.length && queueJob?.isActive != true) {
+                finishBook(text.length)
+            } else if (autoContinue) {
+                updateState(
+                    NarrationPlaybackPhase.PREPARING,
+                    completed,
+                    text.length,
+                    "Terminando de preparar el próximo tramo…",
+                )
+                ensureQueue()
+            }
         }
 
         override fun onPlayerError(error: PlaybackException) {
             autoContinue = false
-            persistOffset(chunkStart)
+            val offset = currentPlaybackOffset()
+            persistOffset(offset)
             CrashReporter.recordNonFatal(DiagnosticArea.PLAYBACK, error)
             updateState(
                 NarrationPlaybackPhase.ERROR,
-                chunkStart,
+                offset,
                 currentText?.length ?: 0,
                 "No pude reproducir este tramo. Inténtalo otra vez.",
             )
             player.clearMediaItems()
+            chunksByMediaId.clear()
+            activeChunk = null
             stopSelf()
         }
     }
@@ -315,8 +411,10 @@ class NarrationPlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
-        persistOffset(chunkStart)
-        generationJob?.cancel()
+        persistOffset(currentPlaybackOffset())
+        loadJob?.cancel()
+        queueJob?.cancel()
+        progressJob?.cancel()
         serviceScope.cancel()
         mediaSession.release()
         player.removeListener(playbackListener)
@@ -329,6 +427,8 @@ class NarrationPlaybackService : MediaSessionService() {
         .replace('_', ' ').replace(Regex("\\s+"), " ").trim().ifBlank { "Libro" }
 
     companion object {
+        private const val PREFETCH_AHEAD_COUNT = 3
+        private const val PROGRESS_UPDATE_MS = 750L
         private const val ACTION_PLAY = "app.bookflow.reader.action.PLAY_BOOK"
         private const val ACTION_STOP = "app.bookflow.reader.action.STOP_NARRATION"
         private const val ACTION_REWIND = "app.bookflow.reader.action.REWIND_NARRATION"

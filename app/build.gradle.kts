@@ -19,8 +19,8 @@ android {
         applicationId = "app.bookflow.reader"
         minSdk = 26
         targetSdk = 35
-        versionCode = 18
-        versionName = "0.2.0-alpha14"
+        versionCode = 19
+        versionName = "0.2.0-alpha15"
         buildConfigField("boolean", "FIREBASE_CONFIGURED", firebaseConfigured.toString())
 
         ndk {
