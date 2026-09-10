@@ -4,11 +4,11 @@
 - Repository: `LoloscarPrr/Bookflow`
 - Base ref: `main`
 - Working ref: `feature/ai-native-foundation`
-- Latest relevant remote commit: `6b73975c526fabb55b01b99f5be1664138ece1b9` — Firebase-enabled alpha13 verification build.
+- Latest relevant remote commit: `346f2a07f1987c12ecb1edbaff19b36d2ae6d74c` — alpha13 Firebase verification evidence.
 
 ## App / build state
-- App version: `0.2.0-alpha13`.
-- Android versionCode: `17`.
+- Target app version: `0.2.0-alpha14`.
+- Target Android versionCode: `18`.
 - Application ID: `app.bookflow.reader`.
 - Minimum Android: API 26.
 
@@ -20,12 +20,13 @@
 - `BF-CORE-001 — Adoptar desarrollo guiado por specs — LOCKED`.
 - `BF-CORE-002 — Multiple layout adaptable — LOCKED`.
 - `BF-RELEASE-001 — Diagnóstico con Firebase Crashlytics — LOCKED`.
+- `BF-NARRATION-001 — Reproducción en segundo plano y progreso persistente — IMPLEMENTING`.
 
 ## Relevant implementation surface
 - `MainActivity.kt` Compose shell, Biblioteca and Lector.
-- Gradle root/app and Android CI workflow.
-- Offline Sherpa-ONNX/Piper renderer and MediaPlayer error paths.
-- Persistence/migration: none expected.
+- Nuevo `MediaSessionService`, control Media3 y estado compartido de reproducción.
+- Persistencia privada del último libro y offset; carga PDF/DOCX/TXT desde URI.
+- Manifest, Gradle app y renderer Sherpa-ONNX/Piper existente.
 
 ## Baseline
 - Source inspection: PASS.
@@ -41,4 +42,4 @@
 - Dashboard delivery and physical layout behavior require later real-device evidence.
 
 ## Next TLC action
-- Install alpha13 on a physical device and confirm the first non-fatal/crash diagnostic appears in the Firebase dashboard without adding a deliberate crash control.
+- Implementar y verificar `BF-NARRATION-001`, manteniendo la prueba física de pantalla apagada/notificación como evidencia pendiente.

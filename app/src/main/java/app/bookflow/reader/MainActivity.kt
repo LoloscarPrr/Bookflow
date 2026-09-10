@@ -1,10 +1,10 @@
 package app.bookflow.reader
 
+import android.content.ComponentName
 import android.content.Context
 import android.database.Cursor
 import android.graphics.Bitmap
 import android.graphics.pdf.PdfRenderer
-import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Bundle
 import android.os.ParcelFileDescriptor
@@ -28,22 +28,20 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import app.bookflow.reader.core.data.DocxTextExtractor
-import app.bookflow.reader.core.data.OfflineNeuralVoiceRenderer
-import app.bookflow.reader.core.data.RuleBasedSceneDirector
+import androidx.core.content.ContextCompat
+import androidx.media3.session.MediaController
+import androidx.media3.session.SessionToken
+import app.bookflow.reader.core.data.BookSessionStore
+import app.bookflow.reader.core.data.DocumentTextLoader
 import app.bookflow.reader.core.diagnostics.CrashReporter
 import app.bookflow.reader.core.diagnostics.DiagnosticArea
 import app.bookflow.reader.core.domain.BookDocument
+import app.bookflow.reader.narration.*
 import app.bookflow.reader.presentation.BookFlowLayout
 import app.bookflow.reader.presentation.WIDE_STAGE_MAX_WIDTH_DP
 import app.bookflow.reader.presentation.rememberBookFlowLayout
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
-import com.tom_roush.pdfbox.pdmodel.PDDocument
-import com.tom_roush.pdfbox.text.PDFTextStripper
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -59,10 +57,8 @@ class MainActivity : ComponentActivity() {
 private fun BookFlowApp() {
     val context = LocalContext.current
     val layout = rememberBookFlowLayout()
-    val renderer = remember(context.applicationContext) {
-        OfflineNeuralVoiceRenderer(context.applicationContext)
-    }
-    var importedBook by remember { mutableStateOf<BookDocument?>(null) }
+    val store = remember(context.applicationContext) { BookSessionStore(context.applicationContext) }
+    var importedBook by remember { mutableStateOf(store.loadLastBook()) }
     var openedBook by remember { mutableStateOf<BookDocument?>(null) }
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
@@ -72,29 +68,14 @@ private fun BookFlowApp() {
                     android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION,
                 )
             }.onFailure { CrashReporter.recordNonFatal(DiagnosticArea.URI_PERMISSION, it) }
-            val mime = context.contentResolver.getType(uri).orEmpty()
-            val title = queryDisplayName(context, uri) ?: "Libro"
-            val text = when {
-                mime == "text/plain" || title.endsWith(".txt", true) -> runCatching {
-                    context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
-                }.onFailure {
-                    CrashReporter.recordNonFatal(DiagnosticArea.TEXT_IMPORT, it)
-                }.getOrNull()
-
-                mime.contains("wordprocessingml", true) || title.endsWith(".docx", true) -> runCatching {
-                    context.contentResolver.openInputStream(uri)?.use(DocxTextExtractor::extract)
-                }.onFailure {
-                    CrashReporter.recordNonFatal(DiagnosticArea.DOCX_IMPORT, it)
-                }.getOrNull()
-
-                else -> null
-            }
-            importedBook = BookDocument(uri.toString(), title, mime, text)
+            val book = BookDocument(
+                uri.toString(),
+                queryDisplayName(context, uri) ?: "Libro",
+                context.contentResolver.getType(uri).orEmpty(),
+            )
+            store.saveLastBook(book)
+            importedBook = book
         }
-    }
-
-    DisposableEffect(renderer) {
-        onDispose { renderer.close() }
     }
 
     LaunchedEffect(layout.layoutClass) {
@@ -105,29 +86,20 @@ private fun BookFlowApp() {
         Surface(Modifier.fillMaxSize()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
                 Box(
-                    Modifier
-                        .fillMaxHeight()
-                        .then(
-                            if (layout.isWide) {
-                                Modifier.widthIn(max = WIDE_STAGE_MAX_WIDTH_DP.dp).fillMaxWidth()
-                            } else {
-                                Modifier.fillMaxWidth()
-                            },
-                        ),
+                    Modifier.fillMaxHeight().then(
+                        if (layout.isWide) {
+                            Modifier.widthIn(max = WIDE_STAGE_MAX_WIDTH_DP.dp).fillMaxWidth()
+                        } else Modifier.fillMaxWidth(),
+                    ),
                 ) {
                     if (openedBook != null) {
-                        ReaderScreen(
-                            book = openedBook!!,
-                            renderer = renderer,
-                            layout = layout,
-                            onBack = { openedBook = null },
-                        )
+                        ReaderScreen(openedBook!!, layout) { openedBook = null }
                     } else {
                         Scaffold(topBar = { TopAppBar(title = { Text("BookFlow") }) }) { padding ->
                             LibraryScreen(
-                                modifier = Modifier.padding(padding),
-                                book = importedBook,
-                                layout = layout,
+                                Modifier.padding(padding),
+                                importedBook,
+                                layout,
                                 onImport = {
                                     launcher.launch(
                                         arrayOf(
@@ -160,22 +132,12 @@ private fun LibraryScreen(
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Text("Tu biblioteca", style = MaterialTheme.typography.headlineMedium)
-        Text(
-            "Lectura · Narración local · IA",
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.SemiBold,
-        )
-        Button(
-            onClick = onImport,
-            modifier = if (layout.isCompact) Modifier.fillMaxWidth() else Modifier,
-        ) {
+        Text("Lectura · Narración local · IA", fontWeight = FontWeight.SemiBold)
+        Button(onClick = onImport, modifier = if (layout.isCompact) Modifier.fillMaxWidth() else Modifier) {
             Text("Importar libro")
         }
         if (book == null) {
-            Box(
-                Modifier.fillMaxWidth().weight(1f),
-                contentAlignment = Alignment.Center,
-            ) {
+            Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
                 Text("Importa un libro para leerlo o escucharlo sin gastar créditos.")
             }
         } else {
@@ -186,9 +148,7 @@ private fun LibraryScreen(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        if (book.isPdf) {
-                            PdfCover(book.uriString, Modifier.width(105.dp).height(150.dp))
-                        }
+                        if (book.isPdf) PdfCover(book.uriString, Modifier.width(105.dp).height(150.dp))
                         BookSummary(book, Modifier.fillMaxWidth())
                     }
                 } else {
@@ -197,9 +157,7 @@ private fun LibraryScreen(
                         horizontalArrangement = Arrangement.spacedBy(14.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        if (book.isPdf) {
-                            PdfCover(book.uriString, Modifier.width(105.dp).height(150.dp))
-                        }
+                        if (book.isPdf) PdfCover(book.uriString, Modifier.width(105.dp).height(150.dp))
                         BookSummary(book, Modifier.weight(1f))
                     }
                 }
@@ -209,7 +167,7 @@ private fun LibraryScreen(
 }
 
 @Composable
-private fun BookSummary(book: BookDocument, modifier: Modifier = Modifier) {
+private fun BookSummary(book: BookDocument, modifier: Modifier) {
     Column(modifier) {
         Text(
             cleanBookTitle(book.title),
@@ -221,7 +179,8 @@ private fun BookSummary(book: BookDocument, modifier: Modifier = Modifier) {
         Text(
             when {
                 book.isPdf -> "PDF · lectura + voz neuronal local"
-                book.textContent != null -> "Listo para narrar sin créditos"
+                book.isDocx -> "DOCX · listo para leer y narrar"
+                book.isReadableText -> "TXT · listo para leer y narrar"
                 else -> "Documento importado"
             },
         )
@@ -232,331 +191,181 @@ private fun BookSummary(book: BookDocument, modifier: Modifier = Modifier) {
 private fun PdfCover(uriString: String, modifier: Modifier) {
     val context = LocalContext.current
     val bitmap = remember(uriString) { renderPdfPageFromUri(context, uriString, 0, .55f) }
-    if (bitmap != null) {
-        Image(bitmap.asImageBitmap(), "Portada", modifier, contentScale = ContentScale.Crop)
-    } else {
-        Card(modifier) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("PDF") }
-        }
-    }
+    if (bitmap != null) Image(bitmap.asImageBitmap(), "Portada", modifier, contentScale = ContentScale.Crop)
+    else Card(modifier) { Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("PDF") } }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ReaderScreen(
-    book: BookDocument,
-    renderer: OfflineNeuralVoiceRenderer,
-    layout: BookFlowLayout,
-    onBack: () -> Unit,
-) {
+private fun ReaderScreen(book: BookDocument, layout: BookFlowLayout, onBack: () -> Unit) {
     val context = LocalContext.current
-    val director = remember { RuleBasedSceneDirector() }
-    val scope = rememberCoroutineScope()
-    var player by remember { mutableStateOf<MediaPlayer?>(null) }
-    var generating by remember { mutableStateOf(false) }
-    var status by remember { mutableStateOf("Preparando libro…") }
-    var pdfText by remember(book.uriString) { mutableStateOf<String?>(null) }
-    var offset by remember(book.uriString) { mutableIntStateOf(0) }
-    var autoContinue by remember(book.uriString) { mutableStateOf(false) }
-    var generationToken by remember(book.uriString) { mutableIntStateOf(0) }
+    val appContext = context.applicationContext
+    val loader = remember(appContext) { DocumentTextLoader(appContext) }
+    val store = remember(appContext) { BookSessionStore(appContext) }
+    val controller = rememberNarrationController()
+    val playback by NarrationPlaybackStateHolder.state.collectAsState()
+    var loadedText by remember(book.uriString) { mutableStateOf(book.textContent) }
+    var loadStatus by remember(book.uriString) { mutableStateOf("Preparando libro…") }
 
     LaunchedEffect(book.uriString) {
-        if (book.isPdf) {
-            pdfText = withContext(Dispatchers.IO) {
-                runCatching { extractPdfText(context, book.uriString) }
-                    .onFailure {
-                        CrashReporter.recordNonFatal(DiagnosticArea.PDF_EXTRACTION, it)
-                    }
-                    .getOrNull()
-                    ?.takeIf { it.isNotBlank() }
-            }
-            status = if (pdfText != null) {
-                "PDF listo · voz neuronal local sin créditos."
+        try {
+            val text = loader.load(book)
+            val narratable = cleanNarratableText(text).takeIf { it.isNotBlank() }
+            loadedText = text.takeIf { it.isNotBlank() }
+            if (narratable == null) {
+                loadStatus = "Este documento no contiene texto extraíble."
             } else {
-                "Este PDF no contiene texto extraíble."
+                val saved = store.loadNarrationOffset(book.uriString).coerceIn(0, narratable.length)
+                loadStatus = "Listo · voz neuronal local sin internet ni créditos."
+                NarrationPlaybackStateHolder.restoreIfInactive(book.uriString, saved, narratable.length, loadStatus)
             }
-        } else {
-            status = "Listo · voz neuronal local sin créditos."
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            CrashReporter.recordNonFatal(importArea(book), error)
+            loadedText = null
+            loadStatus = "No pude abrir el texto de este documento."
         }
     }
 
-    DisposableEffect(book.uriString) {
-        onDispose {
-            autoContinue = false
-            generationToken += 1
-            runCatching { player?.release() }
-        }
-    }
+    val narratable = loadedText?.let(::cleanNarratableText)?.takeIf { it.isNotBlank() }
+    val isCurrent = playback.bookUri == book.uriString
+    val phase = if (isCurrent) playback.phase else NarrationPlaybackPhase.IDLE
+    val offset = if (isCurrent) playback.offset else store.loadNarrationOffset(book.uriString)
+    val total = if (isCurrent) playback.totalChars else narratable?.length ?: 0
+    val progress = narrationProgressPercent(offset, total)
+    val hasSegment = isCurrent && (controller?.mediaItemCount ?: 0) > 0
+    val preparing = phase == NarrationPlaybackPhase.PREPARING
+    val canNarrate = narratable != null && controller != null && !preparing
+    val showStop = isCurrent && (preparing || phase == NarrationPlaybackPhase.PLAYING || hasSegment)
 
-    val raw = book.textContent ?: pdfText
-    val narratable = raw?.let(::cleanNarratableText)
-    val progress = if (narratable.isNullOrEmpty()) {
-        0
-    } else {
-        ((offset.toFloat() / narratable.length) * 100).toInt().coerceIn(0, 100)
-    }
-
-    var narrateAt: ((Int) -> Unit)? = null
-    narrateAt = fun(start: Int) {
-        val text = narratable ?: return
-        val chunk = nextNarrationChunk(text, start)
-        if (chunk.text.isBlank()) {
-            autoContinue = false
-            offset = text.length
-            status = "Llegaste al final del libro."
-            return
-        }
-
-        val requestToken = generationToken + 1
-        generationToken = requestToken
-        generating = true
-        status = if (start == 0) {
-            "Preparando voz neuronal local… La primera vez puede demorar un poco."
-        } else {
-            "Preparando el siguiente tramo en el teléfono…"
-        }
-
-        scope.launch {
-            try {
-                val plan = director.createPlan(chunk.text)
-                val segment = renderer.render(plan, plan.speakerId)
-                if (requestToken != generationToken || !autoContinue) return@launch
-
-                runCatching { player?.release() }
-                player = MediaPlayer().apply {
-                    setDataSource(segment.localUri)
-                    setOnPreparedListener {
-                        if (requestToken != generationToken || !autoContinue) {
-                            it.release()
-                            return@setOnPreparedListener
-                        }
-                        offset = start
-                        status = "Reproduciendo · ${plan.speakerLabel} · ${plan.mood} · sin créditos"
-                        it.start()
-                    }
-                    setOnCompletionListener {
-                        offset = chunk.end
-                        if (autoContinue && chunk.end < text.length) {
-                            status = "Continuando narración local…"
-                            narrateAt?.invoke(chunk.end)
-                        } else if (chunk.end >= text.length) {
-                            autoContinue = false
-                            status = "Llegaste al final del libro."
-                        } else {
-                            status = "Pausado en ${((chunk.end.toFloat() / text.length) * 100).toInt()}%"
-                        }
-                    }
-                    setOnErrorListener { _, what, extra ->
-                        autoContinue = false
-                        status = "No pude reproducir este tramo. Inténtalo otra vez."
-                        CrashReporter.recordNonFatal(
-                            DiagnosticArea.PLAYBACK,
-                            IllegalStateException("MediaPlayer error $what/$extra"),
-                        )
-                        true
-                    }
-                    prepareAsync()
-                }
-            } catch (error: CancellationException) {
-                throw error
-            } catch (error: Exception) {
-                CrashReporter.recordNonFatal(DiagnosticArea.NARRATION, error)
-                if (requestToken == generationToken) {
-                    autoContinue = false
-                    status = "No pude iniciar la voz local: ${error.message ?: "error desconocido"}"
-                }
-            } finally {
-                if (requestToken == generationToken) generating = false
+    fun primaryAction() {
+        when {
+            phase == NarrationPlaybackPhase.PLAYING -> controller?.pause()
+            phase == NarrationPlaybackPhase.PAUSED && hasSegment -> controller?.play()
+            else -> {
+                val requested = if (phase == NarrationPlaybackPhase.COMPLETED) 0
+                else store.loadNarrationOffset(book.uriString)
+                runCatching { NarrationPlaybackService.play(appContext, book, requested) }
+                    .onFailure { CrashReporter.recordNonFatal(DiagnosticArea.PLAYBACK, it) }
             }
         }
-    }
-
-    fun startOrResume() {
-        if (narratable == null) return
-        autoContinue = true
-        narrateAt?.invoke(offset)
-    }
-
-    fun stopNarration() {
-        autoContinue = false
-        generationToken += 1
-        generating = false
-        runCatching { player?.stop() }
-        runCatching { player?.release() }
-        player = null
-        status = "Narración detenida en $progress%."
     }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = {
-                    Text(
-                        cleanBookTitle(book.title),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                },
-                navigationIcon = {
-                    if (layout.isCompact) {
-                        TextButton(onClick = onBack) { Text("Volver") }
-                    } else {
-                        Button(onClick = onBack, modifier = Modifier.padding(horizontal = 6.dp)) {
-                            Text("Volver")
-                        }
-                    }
-                },
+                title = { Text(cleanBookTitle(book.title), maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                navigationIcon = { TextButton(onClick = onBack) { Text("Volver") } },
             )
         },
     ) { padding ->
         Column(Modifier.padding(padding).fillMaxSize()) {
             Card(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = if (layout.isCompact) 8.dp else 12.dp, vertical = 8.dp),
+                Modifier.fillMaxWidth()
+                    .padding(horizontal = if (layout.isCompact) 8.dp else 12.dp, vertical = 6.dp),
             ) {
                 Column(
-                    Modifier.padding(layout.cardPadding),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    Modifier.padding(horizontal = layout.cardPadding, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    Text(
-                        "Narración local",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Text("Voz neuronal española · funciona sin internet ni créditos")
-                    Text("Posición de narración: $progress%")
-                    LinearProgressIndicator(
-                        progress = { progress / 100f },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    if (layout.isCompact) {
-                        Column(
-                            Modifier.fillMaxWidth(),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            Button(
-                                enabled = narratable != null && !generating && !autoContinue,
-                                onClick = { startOrResume() },
-                                modifier = Modifier.fillMaxWidth(),
-                            ) {
-                                Text(narrationButtonLabel(generating, offset))
-                            }
-                            if (autoContinue || player != null || generating) {
-                                OutlinedButton(
-                                    onClick = { stopNarration() },
-                                    modifier = Modifier.fillMaxWidth(),
-                                ) {
-                                    Text("Detener")
-                                }
-                            }
-                            if (offset > 0 && !autoContinue) {
-                                OutlinedButton(
-                                    enabled = !generating,
-                                    onClick = {
-                                        offset = (offset - NARRATION_CHUNK_SIZE).coerceAtLeast(0)
-                                        status = "Retrocediste un tramo."
-                                    },
-                                    modifier = Modifier.fillMaxWidth(),
-                                ) {
-                                    Text("Atrás")
-                                }
-                            }
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("Narración local", fontWeight = FontWeight.SemiBold)
+                        Text("$progress%")
+                    }
+                    LinearProgressIndicator(progress = { progress / 100f }, modifier = Modifier.fillMaxWidth())
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Button(
+                            enabled = canNarrate,
+                            onClick = ::primaryAction,
+                            modifier = if (layout.isCompact) Modifier.weight(1f) else Modifier,
+                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 9.dp),
+                        ) { Text(primaryButtonLabel(phase, offset)) }
+                        if (showStop) {
+                            OutlinedButton(
+                                onClick = {
+                                    runCatching { NarrationPlaybackService.stop(appContext) }
+                                        .onFailure { CrashReporter.recordNonFatal(DiagnosticArea.PLAYBACK, it) }
+                                },
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 9.dp),
+                            ) { Text("Detener") }
                         }
-                    } else {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(
-                                enabled = narratable != null && !generating && !autoContinue,
-                                onClick = { startOrResume() },
-                            ) {
-                                Text(narrationButtonLabel(generating, offset))
-                            }
-                            if (autoContinue || player != null || generating) {
-                                OutlinedButton(onClick = { stopNarration() }) { Text("Detener") }
-                            }
-                            if (offset > 0 && !autoContinue) {
-                                OutlinedButton(
-                                    enabled = !generating,
-                                    onClick = {
-                                        offset = (offset - NARRATION_CHUNK_SIZE).coerceAtLeast(0)
-                                        status = "Retrocediste un tramo."
-                                    },
-                                ) {
-                                    Text("Atrás")
-                                }
-                            }
+                        if (isCurrent && offset > 0 && !preparing) {
+                            TextButton(
+                                onClick = {
+                                    runCatching { NarrationPlaybackService.rewind(appContext, book) }
+                                        .onFailure { CrashReporter.recordNonFatal(DiagnosticArea.PLAYBACK, it) }
+                                },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 9.dp),
+                            ) { Text("Atrás") }
                         }
                     }
-                    Text(status, style = MaterialTheme.typography.bodySmall)
+                    Text(if (isCurrent) playback.status else loadStatus, style = MaterialTheme.typography.bodySmall)
                 }
             }
 
             when {
                 book.isPdf -> Box(Modifier.weight(1f)) { PdfBookReader(book.uriString, layout) }
-                book.textContent != null -> Column(
-                    Modifier
-                        .weight(1f)
-                        .verticalScroll(rememberScrollState())
+                loadedText != null -> Column(
+                    Modifier.weight(1f).verticalScroll(rememberScrollState())
                         .padding(horizontal = layout.horizontalPadding, vertical = 20.dp),
-                ) {
-                    Text(book.textContent, style = MaterialTheme.typography.bodyLarge)
-                }
-
-                else -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("Este formato todavía no puede narrarse.")
-                }
+                ) { Text(loadedText!!, style = MaterialTheme.typography.bodyLarge) }
+                loadStatus == "Preparando libro…" -> Box(
+                    Modifier.fillMaxSize(), contentAlignment = Alignment.Center,
+                ) { Text("Abriendo documento…") }
+                else -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(loadStatus) }
             }
         }
     }
 }
 
-private fun narrationButtonLabel(generating: Boolean, offset: Int): String = when {
-    generating -> "Preparando…"
-    offset == 0 -> "Narrar"
-    else -> "Reanudar"
+private fun primaryButtonLabel(phase: NarrationPlaybackPhase, offset: Int) = when (phase) {
+    NarrationPlaybackPhase.PREPARING -> "Preparando…"
+    NarrationPlaybackPhase.PLAYING -> "Pausar"
+    NarrationPlaybackPhase.PAUSED -> "Reanudar"
+    NarrationPlaybackPhase.COMPLETED -> "Desde el inicio"
+    NarrationPlaybackPhase.ERROR -> "Reintentar"
+    NarrationPlaybackPhase.IDLE -> if (offset == 0) "Narrar" else "Continuar"
 }
 
-private data class NarrationChunk(val text: String, val end: Int)
-
-private const val NARRATION_CHUNK_SIZE = 1_150
-
-private fun nextNarrationChunk(
-    text: String,
-    start: Int,
-    max: Int = NARRATION_CHUNK_SIZE,
-): NarrationChunk {
-    if (start >= text.length) return NarrationChunk("", text.length)
-    val hard = (start + max).coerceAtMost(text.length)
-    if (hard == text.length) return NarrationChunk(text.substring(start), hard)
-    val window = text.substring(start, hard)
-    val candidates = listOf(
-        window.lastIndexOf(". "),
-        window.lastIndexOf("! "),
-        window.lastIndexOf("? "),
-        window.lastIndexOf("\n\n"),
-    ).filter { it > max / 2 }
-    val cut = candidates.maxOrNull()?.plus(1)
-        ?: window.lastIndexOf(' ').takeIf { it > max / 2 }
-        ?: window.length
-    return NarrationChunk(window.substring(0, cut).trim(), start + cut)
+private fun importArea(book: BookDocument) = when {
+    book.isPdf -> DiagnosticArea.PDF_EXTRACTION
+    book.isDocx -> DiagnosticArea.DOCX_IMPORT
+    else -> DiagnosticArea.TEXT_IMPORT
 }
 
-private fun cleanNarratableText(text: String) = text
-    .replace(Regex("(?m)^\\s*\\d+\\s*$"), "")
-    .replace(Regex("[ \\t]+"), " ")
-    .replace(Regex("\\n{3,}"), "\n\n")
-    .trim()
-
-private fun extractPdfText(context: Context, uriString: String): String {
-    val bytes = context.contentResolver.openInputStream(Uri.parse(uriString))
-        ?.use { it.readBytes() }
-        ?: error("No pude abrir el PDF")
-    return PDDocument.load(bytes).use { document ->
-        PDFTextStripper().apply { sortByPosition = true }
-            .getText(document)
-            .replace("\u0000", "")
-            .trim()
+@Composable
+private fun rememberNarrationController(): MediaController? {
+    val context = LocalContext.current
+    var controller by remember { mutableStateOf<MediaController?>(null) }
+    DisposableEffect(context.applicationContext) {
+        val token = SessionToken(
+            context.applicationContext,
+            ComponentName(context.applicationContext, NarrationPlaybackService::class.java),
+        )
+        val future = MediaController.Builder(context.applicationContext, token).buildAsync()
+        future.addListener(
+            {
+                runCatching { future.get() }
+                    .onSuccess { controller = it }
+                    .onFailure { CrashReporter.recordNonFatal(DiagnosticArea.PLAYBACK, it) }
+            },
+            ContextCompat.getMainExecutor(context),
+        )
+        onDispose {
+            controller = null
+            MediaController.releaseFuture(future)
+        }
     }
+    return controller
 }
 
 @Composable
@@ -567,14 +376,10 @@ private fun PdfBookReader(uriString: String, layout: BookFlowLayout) {
     DisposableEffect(uriString) {
         descriptor = runCatching {
             context.contentResolver.openFileDescriptor(Uri.parse(uriString), "r")
-        }.onFailure {
-            CrashReporter.recordNonFatal(DiagnosticArea.PDF_OPEN, it)
-        }.getOrNull()
+        }.onFailure { CrashReporter.recordNonFatal(DiagnosticArea.PDF_OPEN, it) }.getOrNull()
         renderer = descriptor?.let {
             runCatching { PdfRenderer(it) }
-                .onFailure { error ->
-                    CrashReporter.recordNonFatal(DiagnosticArea.PDF_OPEN, error)
-                }
+                .onFailure { error -> CrashReporter.recordNonFatal(DiagnosticArea.PDF_OPEN, error) }
                 .getOrNull()
         }
         onDispose {
@@ -582,16 +387,11 @@ private fun PdfBookReader(uriString: String, layout: BookFlowLayout) {
             runCatching { descriptor?.close() }
         }
     }
-
-    val pdf = renderer ?: return Box(
-        Modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center,
-    ) { Text("Abriendo PDF…") }
-
+    val pdf = renderer ?: return Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Text("Abriendo PDF…")
+    }
     Column(
-        Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState())
             .padding(if (layout.isCompact) 4.dp else 8.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
@@ -617,9 +417,7 @@ private fun renderPdfPageFromUri(
     context.contentResolver.openFileDescriptor(Uri.parse(uri), "r")?.use { descriptor ->
         PdfRenderer(descriptor).use { renderer -> renderPdfPage(renderer, index, scale) }
     }
-}.onFailure {
-    CrashReporter.recordNonFatal(DiagnosticArea.PDF_RENDER, it)
-}.getOrNull()
+}.onFailure { CrashReporter.recordNonFatal(DiagnosticArea.PDF_RENDER, it) }.getOrNull()
 
 private fun renderPdfPage(renderer: PdfRenderer, index: Int, scale: Float): Bitmap? = runCatching {
     renderer.openPage(index).use { page ->
@@ -632,18 +430,10 @@ private fun renderPdfPage(renderer: PdfRenderer, index: Int, scale: Float): Bitm
             page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
         }
     }
-}.onFailure {
-    CrashReporter.recordNonFatal(DiagnosticArea.PDF_RENDER, it)
-}.getOrNull()
+}.onFailure { CrashReporter.recordNonFatal(DiagnosticArea.PDF_RENDER, it) }.getOrNull()
 
-private val BookDocument.isPdf: Boolean
-    get() = mimeType.contains("pdf", true) || title.endsWith(".pdf", true)
-
-private fun cleanBookTitle(title: String) = title
-    .substringBeforeLast(".")
-    .replace('_', ' ')
-    .replace(Regex("\\s+"), " ")
-    .trim()
+private fun cleanBookTitle(title: String) = title.substringBeforeLast(".")
+    .replace('_', ' ').replace(Regex("\\s+"), " ").trim()
 
 private fun queryDisplayName(context: Context, uri: Uri): String? {
     var cursor: Cursor? = null

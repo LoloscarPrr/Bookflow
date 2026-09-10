@@ -19,8 +19,8 @@ android {
         applicationId = "app.bookflow.reader"
         minSdk = 26
         targetSdk = 35
-        versionCode = 17
-        versionName = "0.2.0-alpha13"
+        versionCode = 18
+        versionName = "0.2.0-alpha14"
         buildConfigField("boolean", "FIREBASE_CONFIGURED", firebaseConfigured.toString())
 
         ndk {
@@ -49,6 +49,8 @@ dependencies {
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
+    implementation("androidx.media3:media3-exoplayer:1.11.0")
+    implementation("androidx.media3:media3-session:1.11.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
     implementation(files("libs/sherpa-onnx.aar"))
