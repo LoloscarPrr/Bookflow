@@ -1,6 +1,6 @@
 # BF-NARRATION-002 — Narración continua y pausas naturales
 
-Status: IMPLEMENTING
+Status: DONE
 Owner: BookFlow
 
 ## Problem
@@ -59,3 +59,15 @@ El porcentaje avanza durante la locución. El estado informa cuando BookFlow est
 - Tests y `assembleDebug` en GitHub Actions con Firebase activo.
 - Inspección del APK, versión y artefacto.
 - Continuidad y pausas percibidas: BLOCKED hasta prueba física de alpha15.
+
+## Verification results
+- [x] AC1 — PASS: `ensureQueue` mantiene `PREFETCH_AHEAD_COUNT = 3` mientras el tramo activo se reproduce.
+- [x] AC2 — PASS: los audios se agregan a una única playlist Media3 mediante `addMediaItem`; no se reemplaza el tramo activo.
+- [x] AC3 — PASS: `addPreparedItem` detecta `STATE_ENDED`, avanza al nuevo elemento, prepara y reanuda automáticamente.
+- [x] AC4 — PASS: Piper usa `silenceScale = 1.0f` y el perfil nuevo invalida la caché con pausas comprimidas.
+- [x] AC5 — PASS: actualización cada 750 ms y prueba unitaria `playbackOffsetAdvancesInsideCurrentChunk`.
+- [x] AC6 — PASS: pausa, detención y destrucción persisten `currentPlaybackOffset`; retroceso conserva su prueba de regresión.
+- [x] AC7 — PASS: tests, Firebase, voz, `assembleDebug` y artefacto pasaron en GitHub Actions run #51.
+- [x] AC8 — PASS: la cola sólo reporta área y excepción saneada; no adjunta texto, título ni URI.
+
+Verificación física de continuidad sin espera y duración percibida de las pausas: **BLOCKED** hasta instalar y probar alpha15 en el teléfono del usuario.
