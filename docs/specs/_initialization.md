@@ -34,6 +34,7 @@
 - Source inspection: PASS.
 - Local static/unit checks: UNAVAILABLE; this environment has Java but no Gradle/Android SDK.
 - GitHub Actions unit tests and build: PASS — run #50, alpha14 con Firebase configurado.
+- GitHub Actions alpha16: PASS — run #53, dos voces high, tests, Firebase y APK de 262,384,860 bytes.
 - Physical alpha14 playback: PASS para voz, pausa y reanudación según video del usuario; progreso intra-tramo: FAIL; continuidad entre tramos y pausas naturales: FAIL según evidencia del usuario.
 - Physical compact/regular/wide rendering: UNAVAILABLE.
 
@@ -44,4 +45,4 @@
 - Dashboard delivery and physical layout behavior require later real-device evidence.
 
 ## Next TLC action
-- Implementar y verificar `BF-NARRATION-003`; naturalidad y tildes quedan pendientes de prueba física de alpha16.
+- Instalar alpha16 y verificar físicamente naturalidad, tildes y continuidad sostenida.

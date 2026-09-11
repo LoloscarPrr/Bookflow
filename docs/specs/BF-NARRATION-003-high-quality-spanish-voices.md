@@ -1,6 +1,6 @@
 # BF-NARRATION-003 — Voces españolas de alta calidad
 
-Status: LOCKED
+Status: VERIFYING
 Owner: BookFlow
 
 ## Problem
@@ -22,16 +22,21 @@ BookFlow narra totalmente sin conexión con dos voces Piper de alta calidad y un
 - Prometer entonación humana perfecta; la validación perceptiva corresponde al dispositivo real.
 
 ## Acceptance criteria
-- [ ] AC1 — Narrador usa Miro high y narradora usa Daniela high; ambos generan con `sid = 0`.
-- [ ] AC2 — La preparación del texto sólo normaliza espacios y conserva caracteres Unicode, tildes y puntuación.
-- [ ] AC3 — La clave de caché incluye el modelo para impedir cruces entre voces o versiones.
-- [ ] AC4 — CI valida los SHA-256 oficiales antes de extraer ambos modelos.
-- [ ] AC5 — Los avisos identifican ambos modelos y su archivo oficial de procedencia.
-- [ ] AC6 — Tests y `assembleDebug` pasan con Firebase configurado, sin exponer texto del libro.
-- [ ] AC7 — La cola anticipada y la persistencia de progreso de alpha15 no se modifican.
+- [x] AC1 — Narrador usa Miro high y narradora usa Daniela high; ambos generan con `sid = 0`.
+- [x] AC2 — La preparación del texto sólo normaliza espacios y conserva caracteres Unicode, tildes y puntuación.
+- [x] AC3 — La clave de caché incluye el modelo para impedir cruces entre voces o versiones.
+- [x] AC4 — CI valida los SHA-256 oficiales antes de extraer ambos modelos.
+- [x] AC5 — Los avisos identifican ambos modelos y su archivo oficial de procedencia.
+- [x] AC6 — Tests y `assembleDebug` pasan con Firebase configurado, sin exponer texto del libro.
+- [x] AC7 — La cola anticipada y la persistencia de progreso de alpha15 no se modifican.
 
 ## Verification plan
 - Prueba unitaria de selección estable Miro/Daniela.
 - Inspección estática de preservación Unicode, claves de caché y `sid = 0`.
 - Tests y `assembleDebug` en GitHub Actions.
 - Instalación y escucha de palabras con tilde en el teléfono del usuario.
+
+## Verification results
+- AC1–AC7: PASS en inspección, pruebas y GitHub Actions run #53 con Firebase activo.
+- APK: PASS, ZIP íntegro; contiene Daniela high y Miro high, SHA-256 `d3786f762ab1856dd522804fb736659118d885c8c36aca7aa24791129906adbd`.
+- Naturalidad, acentuación percibida y rendimiento sostenido: BLOCKED hasta la prueba física de alpha16.
