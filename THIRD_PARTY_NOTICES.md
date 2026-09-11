@@ -19,4 +19,4 @@ BookFlow uses the single-speaker `vits-piper-es_AR-daniela-high` model distribut
 
 - Language: Spanish (`es_AR`)
 
-Each model's original `MODEL_CARD`, including its authoritative licensing information, remains bundled alongside its model assets.
+The models are packaged from the official Sherpa-ONNX `tts-models` release; consult each upstream model card for its authoritative licensing information.

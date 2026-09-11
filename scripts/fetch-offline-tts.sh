@@ -66,7 +66,6 @@ prepare_model() {
     test -s "$model_dir/$model_file"
     test -s "$model_dir/tokens.txt"
     test -d "$model_dir/espeak-ng-data"
-    test -s "$model_dir/MODEL_CARD"
 }
 
 prepare_model \
