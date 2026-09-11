@@ -4,11 +4,11 @@
 - Repository: `LoloscarPrr/Bookflow`
 - Base ref: `main`
 - Working ref: `feature/ai-native-foundation`
-- Latest relevant remote commit: `712f2cc04e60ff075d99c7bc50f16b8732e87512` — alpha14 background playback build.
+- Latest relevant remote commit: `29a0174cf7ae08c7e87da88507faafec61447db5` — alpha15 continuous narration verification.
 
 ## App / build state
-- Target app version: `0.2.0-alpha15`.
-- Target Android versionCode: `19`.
+- Target app version: `0.2.0-alpha16`.
+- Target Android versionCode: `20`.
 - Application ID: `app.bookflow.reader`.
 - Minimum Android: API 26.
 
@@ -22,6 +22,7 @@
 - `BF-RELEASE-001 — Diagnóstico con Firebase Crashlytics — LOCKED`.
 - `BF-NARRATION-001 — Reproducción en segundo plano y progreso persistente — IMPLEMENTING`.
 - `BF-NARRATION-002 — Narración continua y pausas naturales — LOCKED`.
+- `BF-NARRATION-003 — Voces españolas de alta calidad — LOCKED`.
 
 ## Relevant implementation surface
 - `MainActivity.kt` Compose shell, Biblioteca and Lector.
@@ -43,4 +44,4 @@
 - Dashboard delivery and physical layout behavior require later real-device evidence.
 
 ## Next TLC action
-- Implementar y verificar `BF-NARRATION-002`; continuidad y pausas percibidas quedan pendientes de prueba física de alpha15.
+- Implementar y verificar `BF-NARRATION-003`; naturalidad y tildes quedan pendientes de prueba física de alpha16.

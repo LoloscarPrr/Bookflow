@@ -43,7 +43,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .offline-tts-downloads
-          key: bookflow-offline-tts-sherpa-1.13.6-sharvard-b30a7a83
+          key: bookflow-offline-tts-sherpa-1.13.6-miro-15c7593c-daniela-71cbf6b7
 
       - name: Prepare offline neural voice
         run: bash scripts/fetch-offline-tts.sh
