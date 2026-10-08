@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - feature/ai-native-foundation
+      - audit/phase-1-1-safe-foundation
   pull_request:
     branches:
       - main
