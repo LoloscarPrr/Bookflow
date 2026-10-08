@@ -7,7 +7,7 @@ local.properties
 # scripts/fetch-offline-tts.sh instead of being committed to git.
 .offline-tts-downloads/
 app/libs/*.aar
-app/src/main/assets/vits-piper-es_ES-sharvard-medium/
+app/src/main/assets/vits-piper-*/
 
 # Firebase Android configuration is supplied to CI through an encrypted secret.
 app/google-services.json
