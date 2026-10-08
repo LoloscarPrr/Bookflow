@@ -14,6 +14,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -42,6 +44,8 @@ import app.bookflow.reader.presentation.WIDE_STAGE_MAX_WIDTH_DP
 import app.bookflow.reader.presentation.rememberBookFlowLayout
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -190,8 +194,13 @@ private fun BookSummary(book: BookDocument, modifier: Modifier) {
 @Composable
 private fun PdfCover(uriString: String, modifier: Modifier) {
     val context = LocalContext.current
-    val bitmap = remember(uriString) { renderPdfPageFromUri(context, uriString, 0, .55f) }
-    if (bitmap != null) Image(bitmap.asImageBitmap(), "Portada", modifier, contentScale = ContentScale.Crop)
+    var bitmap by remember(uriString) { mutableStateOf<Bitmap?>(null) }
+    LaunchedEffect(uriString) {
+        bitmap = withContext(Dispatchers.IO) {
+            renderPdfPageFromUri(context.applicationContext, uriString, 0, .55f)
+        }
+    }
+    if (bitmap != null) Image(bitmap!!.asImageBitmap(), "Portada", modifier, contentScale = ContentScale.Crop)
     else Card(modifier) { Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("PDF") } }
 }
 
@@ -370,41 +379,56 @@ private fun rememberNarrationController(): MediaController? {
 
 @Composable
 private fun PdfBookReader(uriString: String, layout: BookFlowLayout) {
-    val context = LocalContext.current
-    var renderer by remember(uriString) { mutableStateOf<PdfRenderer?>(null) }
-    var descriptor by remember(uriString) { mutableStateOf<ParcelFileDescriptor?>(null) }
-    DisposableEffect(uriString) {
-        descriptor = runCatching {
-            context.contentResolver.openFileDescriptor(Uri.parse(uriString), "r")
-        }.onFailure { CrashReporter.recordNonFatal(DiagnosticArea.PDF_OPEN, it) }.getOrNull()
-        renderer = descriptor?.let {
-            runCatching { PdfRenderer(it) }
-                .onFailure { error -> CrashReporter.recordNonFatal(DiagnosticArea.PDF_OPEN, error) }
-                .getOrNull()
-        }
-        onDispose {
-            runCatching { renderer?.close() }
-            runCatching { descriptor?.close() }
+    val context = LocalContext.current.applicationContext
+    var pageCount by remember(uriString) { mutableIntStateOf(-1) }
+    LaunchedEffect(uriString) {
+        pageCount = withContext(Dispatchers.IO) {
+            runCatching {
+                context.contentResolver.openFileDescriptor(Uri.parse(uriString), "r")?.use { fd ->
+                    PdfRenderer(fd).use { it.pageCount }
+                } ?: 0
+            }.onFailure { CrashReporter.recordNonFatal(DiagnosticArea.PDF_OPEN, it) }.getOrDefault(0)
         }
     }
-    val pdf = renderer ?: return Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Text("Abriendo PDF…")
-    }
-    Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState())
-            .padding(if (layout.isCompact) 4.dp else 8.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        for (index in 0 until pdf.pageCount) {
-            remember(uriString, index) { renderPdfPage(pdf, index, 1.5f) }?.let {
-                Image(
-                    it.asImageBitmap(),
-                    "Página ${index + 1}",
-                    Modifier.fillMaxWidth(),
-                    contentScale = ContentScale.FillWidth,
-                )
+    when {
+        pageCount < 0 -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator()
+        }
+        pageCount == 0 -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text("No fue posible abrir las páginas del PDF.")
+        }
+        else -> LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(if (layout.isCompact) 4.dp else 8.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            items(count = pageCount, key = { it }) { index ->
+                PdfLazyPage(uriString, index)
             }
         }
+    }
+}
+
+@Composable
+private fun PdfLazyPage(uriString: String, index: Int) {
+    val context = LocalContext.current.applicationContext
+    var bitmap by remember(uriString, index) { mutableStateOf<Bitmap?>(null) }
+    LaunchedEffect(uriString, index) {
+        bitmap = withContext(Dispatchers.IO) {
+            renderPdfPageFromUri(context, uriString, index, 1.25f)
+        }
+    }
+    if (bitmap == null) {
+        Box(Modifier.fillMaxWidth().height(380.dp), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator()
+        }
+    } else {
+        Image(
+            bitmap!!.asImageBitmap(),
+            "Página ${index + 1}",
+            Modifier.fillMaxWidth(),
+            contentScale = ContentScale.FillWidth,
+        )
     }
 }
 
