@@ -14,6 +14,7 @@ import com.k2fsa.sherpa.onnx.OfflineTtsVitsModelConfig
 import java.io.File
 import java.security.MessageDigest
 import java.util.UUID
+import kotlin.math.abs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -35,7 +36,7 @@ class OfflineNeuralVoiceRenderer(private val context: Context) : VoiceRenderer, 
         @Suppress("UNUSED_PARAMETER") voiceId: String,
     ): RenderedVoiceSegment = withContext(Dispatchers.IO) {
         renderMutex.withLock {
-            findLegacyCloudSegment(plan)?.let { return@withLock it }
+            // Old cloud cache audio was mixed at unknown loudness and pacing; do not reuse it for this profile.
 
             val narratorModel = offlineNarratorModelFor(plan.speakerId)
             val model = modelConfigFor(narratorModel)
@@ -66,6 +67,7 @@ class OfflineNeuralVoiceRenderer(private val context: Context) : VoiceRenderer, 
             }
             val audio = tts.generate(text = passage, sid = 0, speed = speed)
             check(audio.samples.isNotEmpty()) { "La voz local no produjo audio." }
+            normalizeSpeechPeak(audio.samples)
 
             val temporary = File(cacheDir, ".$cacheKey-${UUID.randomUUID()}.wav")
             try {
@@ -167,6 +169,16 @@ class OfflineNeuralVoiceRenderer(private val context: Context) : VoiceRenderer, 
             ?.let { RenderedVoiceSegment(key, it.absolutePath, 0L) }
     }
 
+    /** Peak-limited amplification of local speech; no boost when audio is already loud. */
+    private fun normalizeSpeechPeak(samples: FloatArray) {
+        val peak = samples.maxOfOrNull { abs(it) } ?: return
+        if (!peak.isFinite() || peak <= 0.0001f || peak >= TARGET_PEAK) return
+        val gain = (TARGET_PEAK / peak).coerceAtMost(MAX_GAIN)
+        for (i in samples.indices) {
+            samples[i] = (samples[i] * gain).coerceIn(-TARGET_PEAK, TARGET_PEAK)
+        }
+    }
+
     private fun preparePassage(value: String): String = value
         .replace(Regex("[ \\t]+"), " ")
         .replace(Regex("\\n{3,}"), "\n\n")
@@ -194,8 +206,10 @@ class OfflineNeuralVoiceRenderer(private val context: Context) : VoiceRenderer, 
     )
 
     private companion object {
-        const val RENDER_PROFILE = "high-quality-spanish-v2-slower-pauses"
+        const val RENDER_PROFILE = "high-quality-spanish-v3-safe-peak-normalization"
         const val LOCAL_CACHE_DIR = "offline_narration_cache"
+        const val TARGET_PEAK = 0.9f
+        const val MAX_GAIN = 2.0f
         const val MAX_CHARS = 1_150
         const val LEGACY_MAX_CHARS = 1_200
         const val MIN_VALID_AUDIO_BYTES = 1_024L
