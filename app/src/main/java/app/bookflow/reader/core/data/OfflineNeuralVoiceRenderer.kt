@@ -60,9 +60,9 @@ class OfflineNeuralVoiceRenderer(private val context: Context) : VoiceRenderer, 
 
             val tts = engines.getOrPut(narratorModel) { createEngine(model) }
             val speed = when (plan.pace) {
-                NarrationPace.SLOW -> 0.92f
-                NarrationPace.MEDIUM -> 1.0f
-                NarrationPace.FAST -> 1.12f
+                NarrationPace.SLOW -> 0.82f
+                NarrationPace.MEDIUM -> 0.9f
+                NarrationPace.FAST -> 1.0f
             }
             val audio = tts.generate(text = passage, sid = 0, speed = speed)
             check(audio.samples.isNotEmpty()) { "La voz local no produjo audio." }
@@ -105,7 +105,7 @@ class OfflineNeuralVoiceRenderer(private val context: Context) : VoiceRenderer, 
             // Piper's default sentence gaps were too abrupt for long-form listening.
             // Keep punctuation in the passage and give sentence boundaries their
             // natural duration instead of compressing them to a quarter.
-            silenceScale = 1.0f,
+            silenceScale = 1.65f,
         )
         return OfflineTts(assetManager = context.assets, config = config)
     }
@@ -194,7 +194,7 @@ class OfflineNeuralVoiceRenderer(private val context: Context) : VoiceRenderer, 
     )
 
     private companion object {
-        const val RENDER_PROFILE = "high-quality-spanish-v1"
+        const val RENDER_PROFILE = "high-quality-spanish-v2-slower-pauses"
         const val LOCAL_CACHE_DIR = "offline_narration_cache"
         const val MAX_CHARS = 1_150
         const val LEGACY_MAX_CHARS = 1_200
