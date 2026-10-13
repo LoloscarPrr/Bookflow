@@ -16,6 +16,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -30,6 +31,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.core.content.ContextCompat
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
@@ -215,6 +218,38 @@ private fun ReaderScreen(book: BookDocument, layout: BookFlowLayout, onBack: () 
     val playback by NarrationPlaybackStateHolder.state.collectAsState()
     var loadedText by remember(book.uriString) { mutableStateOf(book.textContent) }
     var loadStatus by remember(book.uriString) { mutableStateOf("Preparando libro…") }
+    val audioPrefs = remember(appContext) { appContext.getSharedPreferences("bookflow_audio_settings", Context.MODE_PRIVATE) }
+    var voiceSpeed by remember { mutableFloatStateOf(audioPrefs.getFloat("speed", 0.9f)) }
+    var voiceVolume by remember { mutableFloatStateOf(audioPrefs.getInt("volume", 50).toFloat()) }
+    var chosenPage by remember(book.uriString) { mutableStateOf("1") }
+    var pageNavigationTarget by remember(book.uriString) { mutableIntStateOf(0) }
+    var pageMessage by remember(book.uriString) { mutableStateOf<String?>(null) }
+    var selectingPage by remember(book.uriString) { mutableStateOf(false) }
+    val readerScope = rememberCoroutineScope()
+    var startingFromPage by remember { mutableStateOf(false) }
+    var requestStartPage by remember { mutableIntStateOf(-1) }
+    LaunchedEffect(requestStartPage) {
+        if (requestStartPage < 1 || !book.isPdf) return@LaunchedEffect
+        startingFromPage = true
+        try {
+            val page = requestStartPage
+            val full = loadedText ?: loader.load(book)
+            val mapped = loader.offsetForPdfPage(book, page, full)
+            if (mapped == null) pageMessage = "No se encontró texto narrable en esa página."
+            else {
+                NarrationPlaybackService.stop(appContext)
+                store.saveNarrationOffset(book.uriString, mapped)
+                NarrationPlaybackService.play(appContext, book, mapped)
+                pageMessage = "Narrando desde la página $page"
+            }
+        } catch (error: Exception) {
+            CrashReporter.recordNonFatal(DiagnosticArea.PDF_EXTRACTION, error)
+            pageMessage = "No fue posible iniciar la narración en esa página."
+        } finally {
+            startingFromPage = false
+            requestStartPage = -1
+        }
+    }
 
     LaunchedEffect(book.uriString) {
         try {
@@ -318,11 +353,55 @@ private fun ReaderScreen(book: BookDocument, layout: BookFlowLayout, onBack: () 
                         }
                     }
                     Text(if (isCurrent) playback.status else loadStatus, style = MaterialTheme.typography.bodySmall)
+                    HorizontalDivider()
+                    Text("Velocidad de voz: ${"%.2f".format(voiceSpeed)}×", style = MaterialTheme.typography.labelMedium)
+                    Slider(
+                        value = voiceSpeed, onValueChange = {
+                            voiceSpeed = it
+                            NarrationPlaybackService.updateAudioSettings(appContext, it, voiceVolume.toInt())
+                        }, valueRange = 0.6f..1.5f,
+                    )
+                    Text("Volumen de voz: ${voiceVolume.toInt()} % · 50 % = volumen original", style = MaterialTheme.typography.labelMedium)
+                    Slider(
+                        value = voiceVolume, onValueChange = {
+                            voiceVolume = it
+                            NarrationPlaybackService.updateAudioSettings(appContext, voiceSpeed, it.toInt())
+                        }, valueRange = 0f..100f,
+                    )
+                    if (book.isPdf) {
+                        TextButton(onClick = { selectingPage = !selectingPage }) {
+                            Text("Ir a página / narrar desde página")
+                        }
+                        if (selectingPage) {
+                            OutlinedTextField(
+                                value = chosenPage, onValueChange = { chosenPage = it.filter(Char::isDigit).take(6) },
+                                label = { Text("Número de página PDF") },
+                                singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(onClick = {
+                                    val page = chosenPage.toIntOrNull()
+                                    if (page == null || page < 1) pageMessage = "Ingresa una página válida."
+                                    else { pageNavigationTarget = page; pageMessage = null }
+                                }) { Text("Ver página") }
+                                Button(
+                                    enabled = !startingFromPage,
+                                    onClick = {
+                                        val page = chosenPage.toIntOrNull()
+                                        if (page == null || page < 1) pageMessage = "Ingresa una página válida."
+                                        else { requestStartPage = page; pageNavigationTarget = page }
+                                    },
+                                ) { Text("Narrar desde aquí") }
+                            }
+                            pageMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                        }
+                    }
                 }
             }
 
             when {
-                book.isPdf -> Box(Modifier.weight(1f)) { PdfBookReader(book.uriString, layout) }
+                book.isPdf -> Box(Modifier.weight(1f)) { PdfBookReader(book.uriString, layout, pageNavigationTarget) }
                 loadedText != null -> Column(
                     Modifier.weight(1f).verticalScroll(rememberScrollState())
                         .padding(horizontal = layout.horizontalPadding, vertical = 20.dp),
@@ -378,9 +457,13 @@ private fun rememberNarrationController(): MediaController? {
 }
 
 @Composable
-private fun PdfBookReader(uriString: String, layout: BookFlowLayout) {
+private fun PdfBookReader(uriString: String, layout: BookFlowLayout, selectedPage: Int) {
     val context = LocalContext.current.applicationContext
     var pageCount by remember(uriString) { mutableIntStateOf(-1) }
+    val pageListState = rememberLazyListState()
+    LaunchedEffect(selectedPage, pageCount) {
+        if (pageCount > 0 && selectedPage in 1..pageCount) pageListState.scrollToItem(selectedPage - 1)
+    }
     LaunchedEffect(uriString) {
         pageCount = withContext(Dispatchers.IO) {
             runCatching {
@@ -398,6 +481,7 @@ private fun PdfBookReader(uriString: String, layout: BookFlowLayout) {
             Text("No fue posible abrir las páginas del PDF.")
         }
         else -> LazyColumn(
+            state = pageListState,
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(if (layout.isCompact) 4.dp else 8.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
