@@ -118,7 +118,7 @@ class NarrationPlaybackService : MediaSessionService() {
             intent.getStringExtra(EXTRA_MIME).orEmpty(),
         )
         val requested = intent.getIntExtra(EXTRA_OFFSET, store.loadNarrationOffset(uri))
-        if (currentBook?.uriString == uri && player.mediaItemCount > 0 && requested == store.loadNarrationOffset(uri)) {
+        if (currentBook?.uriString == uri && player.mediaItemCount > 0 && !intent.getBooleanExtra(EXTRA_FORCE_SEEK, false)) {
             autoContinue = true
             player.play()
             ensureQueue()
@@ -459,15 +459,17 @@ class NarrationPlaybackService : MediaSessionService() {
         private const val EXTRA_TITLE = "book_title"
         private const val EXTRA_MIME = "book_mime"
         private const val EXTRA_OFFSET = "book_offset"
+        private const val EXTRA_FORCE_SEEK = "force_seek"
 
-        fun play(context: Context, book: BookDocument, offset: Int) {
+        fun play(context: Context, book: BookDocument, offset: Int, forceSeek: Boolean = false) {
             context.startService(
                 Intent(context, NarrationPlaybackService::class.java)
                     .setAction(ACTION_PLAY)
                     .putExtra(EXTRA_URI, book.uriString)
                     .putExtra(EXTRA_TITLE, book.title)
                     .putExtra(EXTRA_MIME, book.mimeType)
-                    .putExtra(EXTRA_OFFSET, offset.coerceAtLeast(0)),
+                    .putExtra(EXTRA_OFFSET, offset.coerceAtLeast(0))
+                    .putExtra(EXTRA_FORCE_SEEK, forceSeek),
             )
         }
 
