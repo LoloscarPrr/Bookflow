@@ -3,6 +3,7 @@ package app.bookflow.reader.narration
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.media.audiofx.LoudnessEnhancer
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -48,6 +49,7 @@ class NarrationPlaybackService : MediaSessionService() {
     private var currentText: String? = null
     private var activeChunk: NarrationChunk? = null
     private var nextChunkOffset = 0
+    private var enhancer: LoudnessEnhancer? = null
     private var autoContinue = false
     private val chunksByMediaId = mutableMapOf<String, NarrationChunk>()
 
@@ -70,6 +72,7 @@ class NarrationPlaybackService : MediaSessionService() {
             addListener(playbackListener)
         }
         mediaSession = MediaSession.Builder(this, player).build()
+        applyAudioSettings()
         progressJob = serviceScope.launch {
             while (isActive) {
                 delay(PROGRESS_UPDATE_MS)
@@ -85,8 +88,26 @@ class NarrationPlaybackService : MediaSessionService() {
             ACTION_PLAY -> playBook(intent)
             ACTION_STOP -> stopNarration()
             ACTION_REWIND -> rewind(intent)
+            ACTION_SETTINGS -> applyAudioSettings()
         }
         return super.onStartCommand(intent, flags, startId)
+    }
+
+    private fun applyAudioSettings() {
+        val prefs = getSharedPreferences("bookflow_audio_settings", MODE_PRIVATE)
+        val speed = prefs.getFloat("speed", 0.9f).coerceIn(0.6f, 1.5f)
+        val volume = prefs.getInt("volume", 50).coerceIn(0, 100)
+        player.setPlaybackSpeed(speed / 0.9f)
+        player.volume = (volume / 50f).coerceIn(0f, 1f)
+        runCatching {
+            if (enhancer == null && player.audioSessionId != C.AUDIO_SESSION_ID_UNSET) {
+                enhancer = LoudnessEnhancer(player.audioSessionId)
+            }
+            enhancer?.apply {
+                setTargetGain(if (volume > 50) ((volume - 50) * 60).coerceAtMost(3000) else 0)
+                enabled = volume > 50
+            }
+        }.onFailure { CrashReporter.recordNonFatal(DiagnosticArea.PLAYBACK, it) }
     }
 
     private fun playBook(intent: Intent) {
@@ -419,6 +440,7 @@ class NarrationPlaybackService : MediaSessionService() {
         mediaSession.release()
         player.removeListener(playbackListener)
         player.release()
+        enhancer?.release()
         renderer.close()
         super.onDestroy()
     }
@@ -432,6 +454,7 @@ class NarrationPlaybackService : MediaSessionService() {
         private const val ACTION_PLAY = "app.bookflow.reader.action.PLAY_BOOK"
         private const val ACTION_STOP = "app.bookflow.reader.action.STOP_NARRATION"
         private const val ACTION_REWIND = "app.bookflow.reader.action.REWIND_NARRATION"
+        private const val ACTION_SETTINGS = "app.bookflow.reader.action.AUDIO_SETTINGS"
         private const val EXTRA_URI = "book_uri"
         private const val EXTRA_TITLE = "book_title"
         private const val EXTRA_MIME = "book_mime"
@@ -446,6 +469,14 @@ class NarrationPlaybackService : MediaSessionService() {
                     .putExtra(EXTRA_MIME, book.mimeType)
                     .putExtra(EXTRA_OFFSET, offset.coerceAtLeast(0)),
             )
+        }
+
+        fun updateAudioSettings(context: Context, speed: Float, volume: Int) {
+            context.getSharedPreferences("bookflow_audio_settings", Context.MODE_PRIVATE).edit()
+                .putFloat("speed", speed.coerceIn(0.6f, 1.5f))
+                .putInt("volume", volume.coerceIn(0, 100))
+                .apply()
+            context.startService(Intent(context, NarrationPlaybackService::class.java).setAction(ACTION_SETTINGS))
         }
 
         fun stop(context: Context) {
