@@ -225,7 +225,6 @@ private fun ReaderScreen(book: BookDocument, layout: BookFlowLayout, onBack: () 
     var pageNavigationTarget by remember(book.uriString) { mutableIntStateOf(0) }
     var pageMessage by remember(book.uriString) { mutableStateOf<String?>(null) }
     var selectingPage by remember(book.uriString) { mutableStateOf(false) }
-    val readerScope = rememberCoroutineScope()
     var startingFromPage by remember { mutableStateOf(false) }
     var requestStartPage by remember { mutableIntStateOf(-1) }
     LaunchedEffect(requestStartPage) {
@@ -237,7 +236,6 @@ private fun ReaderScreen(book: BookDocument, layout: BookFlowLayout, onBack: () 
             val mapped = loader.offsetForPdfPage(book, page, full)
             if (mapped == null) pageMessage = "No se encontró texto narrable en esa página."
             else {
-                NarrationPlaybackService.stop(appContext)
                 store.saveNarrationOffset(book.uriString, mapped)
                 NarrationPlaybackService.play(appContext, book, mapped)
                 pageMessage = "Narrando desde la página $page"
