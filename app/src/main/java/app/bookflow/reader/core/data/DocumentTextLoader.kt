@@ -22,6 +22,33 @@ class DocumentTextLoader(private val context: Context) {
         }
     }
 
+    /** Finds a page's textual start in the same extracted text used by narration. */
+    suspend fun offsetForPdfPage(book: BookDocument, page: Int, fullText: String): Int? =
+        withContext(Dispatchers.IO) {
+            if (!book.isPdf || page < 1) return@withContext null
+            PDFBoxResourceLoader.init(context.applicationContext)
+            val bytes = open(book.uriString) { it.readBytes() }
+            PDDocument.load(bytes).use { document ->
+                if (page > document.numberOfPages) return@use null
+                val pageText = PDFTextStripper().apply {
+                    sortByPosition = true
+                    startPage = page
+                    endPage = page
+                }.getText(document).replace("\u0000", "").trim()
+                if (pageText.isBlank()) return@use null
+                // Whitespace and page-break normalization mirror cleanNarratableText.
+                val normalizedFull = app.bookflow.reader.narration.cleanNarratableText(fullText)
+                val normalizedPage = app.bookflow.reader.narration.cleanNarratableText(pageText)
+                val tokens = normalizedPage.split(Regex("\\s+")).filter { it.isNotEmpty() }
+                for (n in minOf(tokens.size, 14) downTo 4) {
+                    val marker = tokens.take(n).joinToString(" ")
+                    val found = normalizedFull.indexOf(marker)
+                    if (found >= 0) return@use found
+                }
+                null
+            }
+        }
+
     private fun loadPdf(uriString: String): String {
         PDFBoxResourceLoader.init(context.applicationContext)
         val bytes = open(uriString) { it.readBytes() }
