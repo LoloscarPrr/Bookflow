@@ -118,7 +118,7 @@ class NarrationPlaybackService : MediaSessionService() {
             intent.getStringExtra(EXTRA_MIME).orEmpty(),
         )
         val requested = intent.getIntExtra(EXTRA_OFFSET, store.loadNarrationOffset(uri))
-        if (currentBook?.uriString == uri && player.mediaItemCount > 0) {
+        if (currentBook?.uriString == uri && player.mediaItemCount > 0 && requested == store.loadNarrationOffset(uri)) {
             autoContinue = true
             player.play()
             ensureQueue()
