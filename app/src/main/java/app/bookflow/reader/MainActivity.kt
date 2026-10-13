@@ -237,7 +237,7 @@ private fun ReaderScreen(book: BookDocument, layout: BookFlowLayout, onBack: () 
             if (mapped == null) pageMessage = "No se encontró texto narrable en esa página."
             else {
                 store.saveNarrationOffset(book.uriString, mapped)
-                NarrationPlaybackService.play(appContext, book, mapped)
+                NarrationPlaybackService.play(appContext, book, mapped, forceSeek = true)
                 pageMessage = "Narrando desde la página $page"
             }
         } catch (error: Exception) {
