@@ -55,6 +55,21 @@ jobs:
       - name: Build debug APK
         run: gradle :app:assembleDebug --stacktrace
 
+      - name: Validate APK package and signature
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$HOME/Android/Sdk}}"
+          BUILD_TOOLS="$(find "$SDK/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          test -n "$BUILD_TOOLS"
+          "$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$APK"
+          PACKAGE="$("$BUILD_TOOLS/aapt" dump badging "$APK" | sed -n "s/^package: name='\\([^']*\\)'.*/\\1/p" | head -n 1)"
+          test "$PACKAGE" = "app.bookflow.reader"
+          echo "Validated package: $PACKAGE"
+          sha256sum "$APK"
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
