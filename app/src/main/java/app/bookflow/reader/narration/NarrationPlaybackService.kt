@@ -392,6 +392,7 @@ class NarrationPlaybackService : MediaSessionService() {
         }
 
         override fun onPlaybackStateChanged(playbackState: Int) {
+            if (playbackState == Player.STATE_READY) applyAudioSettings()
             if (playbackState != Player.STATE_ENDED) return
             val text = currentText ?: return
             val completed = activeChunk?.end ?: currentPlaybackOffset()
