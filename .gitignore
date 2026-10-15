@@ -11,3 +11,8 @@ app/src/main/assets/vits-piper-*/
 
 # Firebase Android configuration is supplied to CI through an encrypted secret.
 app/google-services.json
+
+# Never commit unencrypted signing keys.
+app/bookflow-signing.jks
+*.keystore
+*.jks
