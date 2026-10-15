@@ -67,6 +67,7 @@ jobs:
           test -s app/bookflow-signing.jks
           keytool -list -keystore app/bookflow-signing.jks -storetype PKCS12 \
             -alias bookflow -storepass:env BOOKFLOW_SIGNING_PASSWORD >/dev/null
+          echo '7004077b0028e551509c8813c9e06b17c5b634d42a2566b4197a9f01e724ceec  app/bookflow-signing.jks' | sha256sum --check
 
       - name: Run unit tests
         run: gradle :app:testDebugUnitTest --stacktrace
@@ -90,6 +91,13 @@ jobs:
           PACKAGE="$("$BUILD_TOOLS/aapt" dump badging "$APK" | sed -n "s/^package: name='\\([^']*\\)'.*/\\1/p" | head -n 1)"
           test "$PACKAGE" = "app.bookflow.reader"
           echo "Validated package: $PACKAGE"
+          VERSION_CODE="$("$BUILD_TOOLS/aapt" dump badging "$APK" |
+            sed -n "s/^package:.*versionCode='\\([^']*\\)'.*/\\1/p" | head -n 1)"
+          if [[ "$VERSION_CODE" != "22" ]]; then
+            echo "::error::Expected alpha18 versionCode 22; got $VERSION_CODE"
+            exit 1
+          fi
+          echo "Verified alpha18 versionCode 22."
           EXPECTED_CERT_SHA256="19541d2616517c7c7cc7e0e68f9175154eb33e0f61be55935ed4ff60a88ec1c4"
           ACTUAL_CERT_SHA256="$("$BUILD_TOOLS/apksigner" verify --print-certs "$APK" |
             sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -n 1)"
