@@ -49,10 +49,32 @@ jobs:
       - name: Prepare offline neural voice
         run: bash scripts/fetch-offline-tts.sh
 
+      - name: Restore persistent BookFlow signing key
+        env:
+          BOOKFLOW_SIGNING_PASSWORD: ${{ secrets.BOOKFLOW_SIGNING_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${BOOKFLOW_SIGNING_PASSWORD:-}" ]]; then
+            echo "::error::Configure BOOKFLOW_SIGNING_PASSWORD under repository Actions secrets."
+            exit 1
+          fi
+          umask 077
+          printf '%s\\n' "$BOOKFLOW_SIGNING_PASSWORD" |
+            openssl enc -d -aes-256-cbc -pbkdf2 -iter 300000 -a \\
+              -in signing/bookflow-signing.jks.enc.b64 \\
+              -out app/bookflow-signing.jks -pass stdin
+          test -s app/bookflow-signing.jks
+          keytool -list -keystore app/bookflow-signing.jks -storetype PKCS12 \\
+            -alias bookflow -storepass:env BOOKFLOW_SIGNING_PASSWORD >/dev/null
+
       - name: Run unit tests
         run: gradle :app:testDebugUnitTest --stacktrace
 
-      - name: Build debug APK
+      - name: Build persistently signed debug APK
+        env:
+          BOOKFLOW_SIGNING_PASSWORD: ${{ secrets.BOOKFLOW_SIGNING_PASSWORD }}
+          BOOKFLOW_REQUIRE_PERSISTENT_SIGNING: "true"
         run: gradle :app:assembleDebug --stacktrace
 
       - name: Validate APK package and signature
@@ -68,6 +90,15 @@ jobs:
           PACKAGE="$("$BUILD_TOOLS/aapt" dump badging "$APK" | sed -n "s/^package: name='\\([^']*\\)'.*/\\1/p" | head -n 1)"
           test "$PACKAGE" = "app.bookflow.reader"
           echo "Validated package: $PACKAGE"
+          EXPECTED_CERT_SHA256="19541d2616517c7c7cc7e0e68f9175154eb33e0f61be55935ed4ff60a88ec1c4"
+          ACTUAL_CERT_SHA256="$("$BUILD_TOOLS/apksigner" verify --print-certs "$APK" |
+            sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -n 1)"
+          ACTUAL_CERT_SHA256="$(printf '%s' "$ACTUAL_CERT_SHA256" | tr '[:upper:]' '[:lower:]')"
+          if [[ "$ACTUAL_CERT_SHA256" != "$EXPECTED_CERT_SHA256" ]]; then
+            echo "::error::APK is not signed with the canonical BookFlow certificate."
+            exit 1
+          fi
+          echo "Verified canonical BookFlow signing certificate."
           sha256sum "$APK"
 
       - name: Upload APK
