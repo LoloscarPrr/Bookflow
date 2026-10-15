@@ -60,12 +60,12 @@ jobs:
             exit 1
           fi
           umask 077
-          printf '%s\\n' "$BOOKFLOW_SIGNING_PASSWORD" |
-            openssl enc -d -aes-256-cbc -pbkdf2 -iter 300000 -a \\
-              -in signing/bookflow-signing.jks.enc.b64 \\
+          printf '%s' "$BOOKFLOW_SIGNING_PASSWORD" |
+            openssl enc -d -aes-256-cbc -pbkdf2 -iter 300000 -a \
+              -in signing/bookflow-signing.jks.enc.b64 \
               -out app/bookflow-signing.jks -pass stdin
           test -s app/bookflow-signing.jks
-          keytool -list -keystore app/bookflow-signing.jks -storetype PKCS12 \\
+          keytool -list -keystore app/bookflow-signing.jks -storetype PKCS12 \
             -alias bookflow -storepass:env BOOKFLOW_SIGNING_PASSWORD >/dev/null
 
       - name: Run unit tests
