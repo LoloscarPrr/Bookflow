@@ -4,6 +4,15 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+val bookflowSigningFile = file("bookflow-signing.jks")
+val bookflowSigningPassword = System.getenv("BOOKFLOW_SIGNING_PASSWORD")
+val bookflowSigningAvailable = bookflowSigningFile.isFile && !bookflowSigningPassword.isNullOrBlank()
+if (System.getenv("BOOKFLOW_REQUIRE_PERSISTENT_SIGNING") == "true") {
+    check(bookflowSigningAvailable) {
+        "Persistent BookFlow signing keystore or password missing. Refusing unsigned/ephemeral CI APK."
+    }
+}
+
 val firebaseConfigured = file("google-services.json").isFile
 
 if (firebaseConfigured) {
@@ -13,6 +22,25 @@ if (firebaseConfigured) {
 
 android {
     namespace = "app.bookflow.reader"
+    signingConfigs {
+        if (bookflowSigningAvailable) {
+            create("bookflowPersistent") {
+                storeFile = bookflowSigningFile
+                storeType = "PKCS12"
+                storePassword = bookflowSigningPassword
+                keyAlias = "bookflow"
+                keyPassword = bookflowSigningPassword
+            }
+        }
+    }
+    buildTypes {
+        getByName("debug") {
+            if (bookflowSigningAvailable) {
+                signingConfig = signingConfigs.getByName("bookflowPersistent")
+            }
+        }
+    }
+
     compileSdk = 35
 
     defaultConfig {
